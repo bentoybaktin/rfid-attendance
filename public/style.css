@@ -322,6 +322,7 @@ td.num, th.num { text-align: right; }
 .user-app > header h1 { overflow-wrap: anywhere; }
 #userNav { display: flex; flex: 1; flex-direction: column; flex-wrap: wrap; align-items: stretch; gap: 12px; width: 100%; }
 #userNav > #userAccountName { overflow-wrap: anywhere; }
+#userNav > #userAddStudentBtn { width: 100%; text-align: left; }
 #userAppearance { width: 100%; }
 #userAppearance .theme-switch { gap: 8px; font-size: 13px; }
 #userAppearance .theme-switch-options { gap: 6px; }

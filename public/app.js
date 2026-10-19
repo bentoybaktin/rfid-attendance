@@ -24,9 +24,12 @@ let studentMarkMode = false;
 let timer = null;
 let userTimer = null;
 let userHideTimer = null;
+let cardWatchTimer = null;
+let cardWatchInProgress = false;
 let lastUserScanId = 0;
 let lastUserAttemptId = 0;
 let currentTab = 'overview';
+let userAddMode = false;
 
 // ---------- API ----------
 async function api(path, opts = {}) {
@@ -108,6 +111,9 @@ function logout() {
 
 $('#logout').onclick = logout;
 $('#userLogout').onclick = logout;
+$('#userAddStudentBtn').onclick = () => openUserStudentForm().catch((err) => {
+  $('#userStatus').textContent = `Could not open the student form: ${err.message}`;
+});
 $('#userNavToggle').onclick = () => {
   const open = $('#userApp').classList.toggle('nav-open');
   $('#userNavToggle').setAttribute('aria-expanded', String(open));
@@ -550,10 +556,64 @@ async function loadUnknown() {
   $('#unknownBox').querySelectorAll('[data-uid]').forEach((b) => (b.onclick = () => ($('#sfUid').value = b.dataset.uid)));
 }
 
+async function startCardWatch() {
+  clearInterval(cardWatchTimer);
+  cardWatchTimer = null;
+  const baseline = await api('/user/latest?after=0');
+  let scanCursor = Number(baseline.scan_cursor) || 0;
+  let attemptCursor = Number(baseline.attempt_cursor) || 0;
+  cardWatchTimer = setInterval(async () => {
+    if (cardWatchInProgress || $('#stuFormPanel').classList.contains('hidden')) return;
+    cardWatchInProgress = true;
+    try {
+      const result = await api(`/user/latest?after=${scanCursor}&attempt_after=${attemptCursor}`);
+      scanCursor = Number(result.scan_cursor) || scanCursor;
+      attemptCursor = Number(result.attempt_cursor) || attemptCursor;
+      const scan = result.latest;
+      if (!scan || !scan.uid) return;
+      if (scan.code === 'UNKNOWN_CARD') {
+        if (!$('#sfUid').value) {
+          $('#sfUid').value = scan.uid;
+          $('#sfMsg').className = 'muted';
+          $('#sfMsg').textContent = `Card ${scan.uid} detected and added to the form.`;
+        }
+      } else if (scan.uid && scan.code !== 'UNKNOWN_CARD') {
+        $('#sfMsg').className = 'err';
+        $('#sfMsg').textContent = 'This RFID card is already registered. Contact the admin to update the RFID.';
+      }
+    } catch (error) {
+      $('#sfMsg').className = 'err';
+      $('#sfMsg').textContent = `Could not check for a scanned RFID card: ${error.message}`;
+    } finally {
+      cardWatchInProgress = false;
+    }
+  }, 500);
+}
+
 function showStudentForm() {
   $('#stuFormPanel').classList.remove('hidden');
   document.body.classList.add('modal-open');
   $('#sfSurname').focus();
+}
+
+async function openUserStudentForm() {
+  userAddMode = true;
+  clearForm();
+  userAddMode = true;
+  const userClasses = await api('/classes');
+  await startCardWatch();
+  $('#sfClass').innerHTML = '<option value="">Choose a grade and section</option>' +
+    userClasses.map((section) => `<option value="${section.grade}::${esc(section.section)}">${esc(clsLabel(section))}</option>`).join('');
+  $('#formTitle').textContent = 'Add student';
+  $('#sfHelp').textContent = 'Choose a section already created by the admin. Existing student names and RFID cards cannot be changed here; contact the admin for updates.';
+  $('#sfHelp').classList.remove('hidden');
+  $('#unknownBox').classList.add('hidden');
+  $('#stuFormPanel').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  $('#sfSurname').focus();
+  $('#userApp').classList.remove('nav-open');
+  $('#userNavToggle').setAttribute('aria-expanded', 'false');
+  $('#userNavToggle').setAttribute('aria-label', 'Open navigation');
 }
 
 function closeSectionForm() {
@@ -592,12 +652,18 @@ $('#sectionForm').onsubmit = async (event) => {
 
 $('#addStudentBtn').onclick = () => {
   clearForm();
-  showStudentForm();
+  startCardWatch().then(showStudentForm).catch((error) => {
+    $('#sfMsg').className = 'err';
+    $('#sfMsg').textContent = `Could not start RFID card detection: ${error.message}`;
+    showStudentForm();
+  });
 };
 
 function editStudent(id) {
   const s = students.find((x) => x.id === id);
   if (!s) return;
+  clearInterval(cardWatchTimer);
+  cardWatchTimer = null;
   showStudentForm();
   $('#formTitle').textContent = 'Edit student';
   $('#sfId').value = s.id;
@@ -615,7 +681,13 @@ function editStudent(id) {
 }
 
 function clearForm() {
+  clearInterval(cardWatchTimer);
+  cardWatchTimer = null;
+  cardWatchInProgress = false;
+  userAddMode = false;
   $('#formTitle').textContent = 'Add student';
+  $('#sfHelp').classList.add('hidden');
+  $('#unknownBox').classList.remove('hidden');
   $('#stuForm').reset();
   $('#sfId').value = '';
   $('#sfMsg').textContent = '';
@@ -658,6 +730,12 @@ $('#stuForm').onsubmit = async (e) => {
   };
   const id = $('#sfId').value;
   try {
+    if (userAddMode) {
+      await api('/user/students', { method: 'POST', body });
+      clearForm();
+      $('#userStatus').textContent = 'Student added successfully. The student is now available to the admin.';
+      return;
+    }
     await api(id ? '/students/' + id : '/students', { method: id ? 'PUT' : 'POST', body });
     clearForm();
     loadStudents();

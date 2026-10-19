@@ -119,7 +119,12 @@ app.use('/api', (req, res, next) => {
       return res.status(401).json({ error: 'unauthorized' });
     }
     req.auth = auth;
-    if (auth.role !== 'admin' && !(auth.role === 'user' && req.method === 'GET' && req.path === '/user/latest')) {
+    const userAllowedRequest = (auth.role === 'user' || auth.role === 'admin') && req.method === 'GET' && req.path === '/user/latest';
+    const userStudentCreateRequest = auth.role === 'user' && (
+      (req.method === 'GET' && req.path === '/classes') ||
+      (req.method === 'POST' && req.path === '/user/students')
+    );
+    if (auth.role !== 'admin' && !userStudentCreateRequest && !userAllowedRequest) {
       return res.status(403).json({ error: 'Admin access required' });
     }
     next();
@@ -153,7 +158,7 @@ app.get('/api/user/latest', async (req, res) => {
   const afternoonLateTime = await getSetting('afternoon_late_time');
   const [latestScan, latestAttempt, scanCursor, attemptCursor] = await Promise.all([
     db.prepare(
-      `SELECT sc.id AS scan_id,s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,
+      `SELECT sc.id AS scan_id,sc.uid,s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,
               s.middle_name,s.name_extension,sc.date,sc.ts,sc.type,
               CASE
                 WHEN sc.type='MORNING_IN' THEN
@@ -171,7 +176,7 @@ app.get('/api/user/latest', async (req, res) => {
        LIMIT 1`
     ).get(afternoonLateTime, afternoonLateTime, afterId),
     db.prepare(
-      `SELECT a.id AS attempt_id,a.date,a.ts,a.code,a.message,a.expected_type,a.student_id,
+      `SELECT a.id AS attempt_id,a.date,a.ts,a.uid,a.code,a.message,a.expected_type,a.student_id,
               s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,s.middle_name,s.name_extension
        FROM scan_attempts a
        LEFT JOIN students s ON s.id=a.student_id
@@ -472,6 +477,50 @@ async function readStudent(body) {
   }
   return { s };
 }
+
+app.post('/api/user/students', async (req, res) => {
+  const { s, error } = await readStudent(req.body);
+  if (error) return res.status(400).json({ error });
+  if (!s.lrn) return res.status(400).json({ error: 'LRN is required to add a student' });
+
+  const duplicateCard = s.rfid_uid
+    ? await db.prepare('SELECT id FROM students WHERE rfid_uid=?').get(s.rfid_uid)
+    : null;
+  if (duplicateCard) {
+    return res.status(409).json({ error: 'This student RFID already exists. Contact the admin to update the RFID.' });
+  }
+  const duplicateName = await db.prepare(
+    `SELECT id FROM students
+     WHERE lower(name)=lower(?)
+        OR (lower(trim(COALESCE(surname,'')))=lower(?)
+          AND lower(trim(COALESCE(first_name,'')))=lower(?)
+          AND lower(trim(COALESCE(middle_name,'')))=lower(?)
+          AND lower(trim(COALESCE(name_extension,'')))=lower(?))
+     LIMIT 1`
+  ).get(s.name, s.surname, s.first_name, s.middle_name || '', s.name_extension || '');
+  if (duplicateName) {
+    return res.status(409).json({ error: 'This student name already exists. Contact the admin for RFID updates.' });
+  }
+
+  try {
+    const result = await db.prepare(
+      `INSERT INTO students(lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,parent_name,parent_phone,consent)
+       VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent)
+       RETURNING id`
+    ).get(s);
+    if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
+    res.status(201).json({ id: Number(result.id) });
+  } catch (error) {
+    if (error.code === '23505' || error.errcode === 1555 || error.errcode === 2067) {
+      const existingCard = s.rfid_uid && await db.prepare('SELECT id FROM students WHERE rfid_uid=?').get(s.rfid_uid);
+      if (existingCard) {
+        return res.status(409).json({ error: 'This student RFID already exists. Contact the admin to update the RFID.' });
+      }
+      return res.status(409).json({ error: 'This LRN already exists. Contact the admin to review the student record.' });
+    }
+    throw error;
+  }
+});
 
 app.post('/api/students', async (req, res) => {
   const { s, error } = await readStudent(req.body);

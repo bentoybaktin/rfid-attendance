@@ -28,6 +28,7 @@
     <button id="userNavBackdrop" type="button" aria-label="Dismiss navigation"></button>
     <nav id="userNav">
       <span id="userAccountName" class="muted"></span>
+      <button id="userAddStudentBtn" class="ghost" type="button">+ Add student</button>
       <div id="userAppearance">
         <label class="theme-switch" for="userDarkModeToggle">
           <span id="userThemeModeLabel">Light mode</span>
@@ -196,33 +197,6 @@
           <table id="stuTable"></table>
         </div>
       </div>
-      <div id="stuFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">
-        <div class="panel student-modal-panel">
-          <div class="row">
-            <h2 id="formTitle">Add student</h2>
-            <button type="button" id="sfClose" class="ghost" aria-label="Close student form">Close</button>
-          </div>
-          <form id="stuForm" class="form">
-            <input type="hidden" id="sfId">
-            <label required>LRN <input id="sfLrn" maxlength="12" placeholder="12-digit LRN" required></label>
-            <label required>Surname <input id="sfSurname" maxlength="100" required></label>
-            <label required>First name <input id="sfFirstName" maxlength="100" required></label>
-            <label>Middle name <input id="sfMiddleName" maxlength="100"></label>
-            <label>Name extension (e.g. Jr., III) <input id="sfNameExtension" maxlength="30"></label>
-            <label>Grade and section <select id="sfClass" required></select></label>
-            <label>RFID card UID <input id="sfUid" placeholder="Tap an unregistered card, then click it below"></label>
-            <div id="unknownBox" class="chips"></div>
-            <label required>Parent / guardian <input id="sfParent" required></label>
-            <label required>Parent mobile number <input id="sfPhone" placeholder="09XXXXXXXXX" required></label>
-            <label class="check"><input id="sfConsent" type="checkbox"> Parent gave written consent to receive SMS (Data Privacy Act)</label>
-            <div class="row">
-              <button type="submit">Save</button>
-              <button type="button" id="sfClear" class="ghost">Cancel</button>
-            </div>
-            <p id="sfMsg" class="err"></p>
-          </form>
-        </div>
-      </div>
       <div id="sectionFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sectionFormTitle">
         <div class="panel student-modal-panel">
           <div class="row">
@@ -352,6 +326,35 @@
         <p id="accountMsg" class="muted" role="status"></p>
       </form>
     </section>
+  </div>
+</div>
+
+<div id="stuFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+  <div class="panel student-modal-panel">
+    <div class="row">
+      <h2 id="formTitle">Add student</h2>
+      <button type="button" id="sfClose" class="ghost" aria-label="Close student form">Close</button>
+    </div>
+    <p id="sfHelp" class="muted hidden"></p>
+    <form id="stuForm" class="form">
+      <input type="hidden" id="sfId">
+      <label required>LRN <input id="sfLrn" maxlength="12" placeholder="12-digit LRN" required></label>
+      <label required>Surname <input id="sfSurname" maxlength="100" required></label>
+      <label required>First name <input id="sfFirstName" maxlength="100" required></label>
+      <label>Middle name <input id="sfMiddleName" maxlength="100"></label>
+      <label>Name extension (e.g. Jr., III) <input id="sfNameExtension" maxlength="30"></label>
+      <label>Grade and section <select id="sfClass" required></select></label>
+      <label>RFID card UID (scan card to fill automatically) <input id="sfUid" placeholder="Scan the card at the reader"></label>
+      <div id="unknownBox" class="chips"></div>
+      <label required>Parent / guardian <input id="sfParent" required></label>
+      <label required>Parent mobile number <input id="sfPhone" placeholder="09XXXXXXXXX" required></label>
+      <label class="check"><input id="sfConsent" type="checkbox"> Parent gave written consent to receive SMS (Data Privacy Act)</label>
+      <div class="row">
+        <button type="submit">Save</button>
+        <button type="button" id="sfClear" class="ghost">Cancel</button>
+      </div>
+      <p id="sfMsg" class="err" role="status"></p>
+    </form>
   </div>
 </div>
 
