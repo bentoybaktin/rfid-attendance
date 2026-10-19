@@ -3,6 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 const {
   db,
+  ready,
+  usePostgres,
   nowManila,
   allSettings,
   getSetting,
@@ -24,6 +26,11 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const USER_USERNAME = process.env.USER_USERNAME || 'user';
 const USER_PASSWORD = process.env.USER_PASSWORD || 'user1234';
 
+if (process.env.VERCEL) {
+  for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'USER_USERNAME', 'USER_PASSWORD', 'DEVICE_KEY', 'AUTH_SECRET']) {
+    if (!process.env[name]) throw new Error(`${name} must be configured for Vercel deployments`);
+  }
+}
 if (!process.env.ADMIN_PASSWORD || !process.env.DEVICE_KEY) {
   console.warn('WARNING: using default ADMIN_PASSWORD / DEVICE_KEY. Set them before real use.');
 }
@@ -35,56 +42,88 @@ function passwordHash(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
 }
 
-function initializeAccount(role, username, password) {
-  if (db.prepare('SELECT id FROM auth_users WHERE role=?').get(role)) return;
+async function initializeAccount(role, username, password) {
+  if (await db.prepare('SELECT id FROM auth_users WHERE role=?').get(role)) return;
   const salt = crypto.randomBytes(16).toString('hex');
-  db.prepare('INSERT INTO auth_users(username,role,salt,password_hash) VALUES(?,?,?,?)')
+  await db.prepare('INSERT INTO auth_users(username,role,salt,password_hash) VALUES(?,?,?,?) ON CONFLICT(role) DO NOTHING')
     .run(username, role, salt, passwordHash(password, salt));
 }
 
-initializeAccount('admin', ADMIN_USERNAME, ADMIN_PASSWORD);
-initializeAccount('user', USER_USERNAME, USER_PASSWORD);
+const appReady = ready.then(async () => {
+  await initializeAccount('admin', ADMIN_USERNAME, ADMIN_PASSWORD);
+  await initializeAccount('user', USER_USERNAME, USER_PASSWORD);
+});
 
 const app = express();
 app.use(express.json());
 
 // ---------- auth ----------
-const tokens = new Map();
-app.post('/api/login', (req, res) => {
+const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
+if (process.env.VERCEL && !process.env.AUTH_SECRET) {
+  throw new Error('AUTH_SECRET must be configured for Vercel deployments');
+}
+const signToken = (account) => {
+  const payload = Buffer.from(JSON.stringify({
+    userId: account.id,
+    role: account.role,
+    username: account.username,
+    version: crypto.createHash('sha256').update(account.password_hash).digest('hex'),
+    expiresAt: Date.now() + 12 * 3600 * 1000,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+};
+function readToken(token) {
+  const [payload, signature] = String(token || '').split('.');
+  if (!payload || !signature) return null;
+  const expected = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest();
+  let given;
+  try { given = Buffer.from(signature, 'base64url'); } catch { return null; }
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+  try {
+    const auth = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return auth.expiresAt > Date.now() ? auth : null;
+  } catch {
+    return null;
+  }
+}
+app.post('/api/login', async (req, res) => {
   const username = String(req.body.username || '').trim();
-  const account = db.prepare('SELECT id,username,role,salt,password_hash FROM auth_users WHERE username=?').get(username);
+  const account = await db.prepare('SELECT id,username,role,salt,password_hash FROM auth_users WHERE lower(username)=lower(?)').get(username);
   const given = passwordHash(String(req.body.password || ''), account ? account.salt : 'invalid-account-salt');
   const ok = account && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(account.password_hash));
   if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
-  const token = crypto.randomBytes(24).toString('hex');
-  tokens.set(token, { userId: account.id, role: account.role, username: account.username, expiresAt: Date.now() + 12 * 3600 * 1000 });
+  const token = signToken(account);
   res.json({ token, role: account.role, username: account.username });
 });
 
 // RFID readers authenticate with a device key instead of the admin login.
-app.post('/api/tap', (req, res) => {
+app.post('/api/tap', async (req, res) => {
   if (req.get('x-device-key') !== DEVICE_KEY) return res.status(401).json({ error: 'bad device key' });
   let when = null;
   const ts = req.body.ts; // optional: readers replaying taps queued while offline
   if (typeof ts === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(ts)) {
     when = { date: ts.slice(0, 10), time: ts.slice(11, 19), ts };
   }
-  const r = processTap(req.body.uid, when);
+  const r = await processTap(req.body.uid, when);
   res.status(r.http || 200).json(r);
 });
 
 app.use('/api', (req, res, next) => {
-  const t = (req.get('authorization') || '').replace('Bearer ', '');
-  const auth = tokens.get(t);
-  if (!auth || auth.expiresAt < Date.now()) {
-    tokens.delete(t);
-    return res.status(401).json({ error: 'unauthorized' });
-  }
-  req.auth = auth;
-  if (auth.role !== 'admin' && !(auth.role === 'user' && req.method === 'GET' && req.path === '/user/latest')) {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-  next();
+  (async () => {
+    const auth = readToken((req.get('authorization') || '').replace('Bearer ', ''));
+    if (!auth) return res.status(401).json({ error: 'unauthorized' });
+    const account = await db.prepare('SELECT id,username,role,password_hash FROM auth_users WHERE id=? AND role=?').get(auth.userId, auth.role);
+    if (!account || account.username !== auth.username ||
+        crypto.createHash('sha256').update(account.password_hash).digest('hex') !== auth.version) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+    req.auth = auth;
+    if (auth.role !== 'admin' && !(auth.role === 'user' && req.method === 'GET' && req.path === '/user/latest')) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+  })().catch(next);
 });
 
 // ---------- helpers ----------
@@ -108,9 +147,9 @@ const displayStudentName = (student) =>
     ? `${student.surname}, ${student.first_name}${student.middle_name ? ` ${student.middle_name.trim().charAt(0).toUpperCase()}.` : ''}${student.name_extension ? ` ${student.name_extension}` : ''}`
     : student.name;
 
-app.get('/api/user/latest', (req, res) => {
+app.get('/api/user/latest', async (req, res) => {
   const afterId = Number(req.query.after) || 0;
-  const latest = db.prepare(
+  const latest = await db.prepare(
     `SELECT sc.id AS scan_id,s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,
             s.middle_name,s.name_extension,sc.date,sc.ts,sc.type,
             CASE
@@ -127,11 +166,11 @@ app.get('/api/user/latest', (req, res) => {
   const formatted = latest
     ? { ...latest, display_name: displayStudentName(latest), full_name: fullStudentName(latest) }
     : null;
-  res.json({ school_name: allSettings().school_name, latest: formatted });
+  res.json({ school_name: (await allSettings()).school_name, latest: formatted });
 });
 
-app.put('/api/account', (req, res) => {
-  const account = db.prepare('SELECT * FROM auth_users WHERE id=? AND role=?').get(req.auth.userId, 'admin');
+app.put('/api/account', async (req, res) => {
+  const account = await db.prepare('SELECT * FROM auth_users WHERE id=? AND role=?').get(req.auth.userId, 'admin');
   if (!account) return res.status(404).json({ error: 'Admin account not found' });
 
   const currentPassword = String(req.body.current_password || '');
@@ -149,24 +188,21 @@ app.put('/api/account', (req, res) => {
     return res.status(400).json({ error: 'New password must be at least 8 characters' });
   }
 
-  const existing = db.prepare('SELECT id FROM auth_users WHERE username=? AND id<>?').get(username, account.id);
+  const existing = await db.prepare('SELECT id FROM auth_users WHERE lower(username)=lower(?) AND id<>?').get(username, account.id);
   if (existing) return res.status(409).json({ error: 'That username is already in use' });
 
   const salt = crypto.randomBytes(16).toString('hex');
-  db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
-    .run(username, salt, passwordHash(newPassword, salt), account.id);
+  const password_hash = passwordHash(newPassword, salt);
+  await db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
+    .run(username, salt, password_hash, account.id);
 
-  for (const [existingToken, auth] of tokens) {
-    if (auth.userId === account.id) tokens.delete(existingToken);
-  }
-  const token = crypto.randomBytes(24).toString('hex');
-  tokens.set(token, { userId: account.id, role: 'admin', username, expiresAt: Date.now() + 12 * 3600 * 1000 });
+  const token = signToken({ id: account.id, role: 'admin', username, password_hash });
   res.json({ token, username });
 });
 
-app.delete('/api/data', (req, res) => {
-  db.pragma('secure_delete = ON');
-  const resetAllData = db.transaction(() => {
+app.delete('/api/data', async (req, res) => {
+  if (!usePostgres) await db.pragma('secure_delete = ON');
+  const deleted = await db.transaction(async () => {
     const deleted = {};
     for (const table of [
       'students',
@@ -181,59 +217,62 @@ app.delete('/api/data', (req, res) => {
       'settings',
       'auth_users',
     ]) {
-      deleted[table] = Number(db.prepare(`DELETE FROM ${table}`).run().changes);
+      deleted[table] = Number((await db.prepare(`DELETE FROM ${table}`).run()).changes);
     }
-    db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('students','scans','notifications','auth_users')").run();
-    initializeAccount('admin', ADMIN_USERNAME, ADMIN_PASSWORD);
-    initializeAccount('user', USER_USERNAME, USER_PASSWORD);
+    if (!usePostgres) await db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('students','scans','notifications','auth_users')").run();
+    await initializeAccount('admin', ADMIN_USERNAME, ADMIN_PASSWORD);
+    await initializeAccount('user', USER_USERNAME, USER_PASSWORD);
     return deleted;
   });
 
-  const deleted = resetAllData();
-  db.exec('VACUUM');
-  const checkpoint = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
-  if (checkpoint.busy) throw new Error('Database was cleared, but its write-ahead log could not be truncated');
-  tokens.clear();
-  const admin = db.prepare('SELECT id,username FROM auth_users WHERE role=?').get('admin');
-  const token = crypto.randomBytes(24).toString('hex');
-  tokens.set(token, { userId: admin.id, role: 'admin', username: admin.username, expiresAt: Date.now() + 12 * 3600 * 1000 });
-  res.json({ ok: true, deleted, token, username: admin.username, vacuumed: true, wal_truncated: true });
+  let vacuumed = false;
+  let walTruncated = false;
+  if (!usePostgres) {
+    await db.exec('VACUUM');
+    const checkpoint = await db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+    if (checkpoint.busy) throw new Error('Database was cleared, but its write-ahead log could not be truncated');
+    vacuumed = true;
+    walTruncated = true;
+  }
+  const admin = await db.prepare('SELECT id,username,role,password_hash FROM auth_users WHERE role=?').get('admin');
+  const token = signToken(admin);
+  res.json({ ok: true, deleted, token, username: admin.username, vacuumed, wal_truncated: walTruncated });
 });
 
 // ---------- settings & holidays ----------
-app.get('/api/settings', (req, res) => res.json(allSettings()));
-app.put('/api/settings', (req, res) => {
+app.get('/api/settings', async (req, res) => res.json(await allSettings()));
+app.put('/api/settings', async (req, res) => {
   if (req.body.late_time !== undefined && !isValidTime(req.body.late_time)) {
     return res.status(400).json({ error: 'Late cutoff must be a valid 24-hour time (HH:MM)' });
   }
   for (const k of Object.keys(DEFAULTS)) {
-    if (req.body[k] !== undefined) setSetting(k, req.body[k]);
+    if (req.body[k] !== undefined) await setSetting(k, req.body[k]);
   }
-  res.json(allSettings());
+  res.json(await allSettings());
 });
-app.get('/api/holidays', (req, res) =>
-  res.json(db.prepare('SELECT * FROM holidays ORDER BY date DESC').all())
+app.get('/api/holidays', async (req, res) =>
+  res.json(await db.prepare('SELECT * FROM holidays ORDER BY date DESC').all())
 );
-app.post('/api/holidays', (req, res) => {
+app.post('/api/holidays', async (req, res) => {
   const { date, name } = req.body;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'Invalid date' });
-  db.prepare('INSERT OR REPLACE INTO holidays(date,name) VALUES(?,?)').run(date, name || 'Holiday');
+  await db.prepare('INSERT INTO holidays(date,name) VALUES(?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name').run(date, name || 'Holiday');
   res.json({ ok: true });
 });
-app.delete('/api/holidays/:date', (req, res) => {
-  db.prepare('DELETE FROM holidays WHERE date=?').run(req.params.date);
+app.delete('/api/holidays/:date', async (req, res) => {
+  await db.prepare('DELETE FROM holidays WHERE date=?').run(req.params.date);
   res.json({ ok: true });
 });
 
 // ---------- students ----------
-app.get('/api/classes', (req, res) =>
+app.get('/api/classes', async (req, res) =>
   res.json(
-    db
+    await db
       .prepare('SELECT grade, section FROM sections ORDER BY grade, section')
       .all()
   )
 );
-app.post('/api/classes', (req, res) => {
+app.post('/api/classes', async (req, res) => {
   const grade = Number(req.body.grade);
   const section = String(req.body.section || '').trim();
   if (!Number.isInteger(grade) || grade < 7 || grade > 12) {
@@ -243,17 +282,17 @@ app.post('/api/classes', (req, res) => {
     return res.status(400).json({ error: 'Enter a section name up to 100 characters' });
   }
   try {
-    db.prepare('INSERT INTO sections(grade,section) VALUES(?,?)').run(grade, section);
+    await db.prepare('INSERT INTO sections(grade,section) VALUES(?,?)').run(grade, section);
     res.json({ ok: true });
   } catch (error) {
-    if (error.errcode === 1555 || error.errcode === 2067) {
+    if (error.errcode === 1555 || error.errcode === 2067 || error.code === '23505') {
       return res.status(409).json({ error: 'That grade and section already exists' });
     }
     throw error;
   }
 });
-app.get('/api/students', (req, res) =>
-  res.json(db.prepare('SELECT * FROM students WHERE active=1 ORDER BY grade, section, surname, first_name, name').all()
+app.get('/api/students', async (req, res) =>
+  res.json((await db.prepare('SELECT * FROM students WHERE active=1 ORDER BY grade, section, surname, first_name, name').all())
     .map((student) => ({
       ...student,
       display_name: displayStudentName(student),
@@ -262,7 +301,7 @@ app.get('/api/students', (req, res) =>
   )
 );
 
-function readStudent(body) {
+async function readStudent(body) {
   const surname = String(body.surname || '').trim();
   const first_name = String(body.first_name || '').trim();
   const middle_name = String(body.middle_name || '').trim() || null;
@@ -287,30 +326,32 @@ function readStudent(body) {
     return { error: 'Name fields are too long' };
   }
   if (s.grade < 7 || s.grade > 12) return { error: 'Grade must be between 7 and 12' };
-  if (!db.prepare('SELECT 1 FROM sections WHERE grade=? AND section=?').get(s.grade, s.section)) {
+  if (!await db.prepare('SELECT 1 FROM sections WHERE grade=? AND section=?').get(s.grade, s.section)) {
     return { error: 'Choose an existing grade and section' };
   }
   return { s };
 }
 
-app.post('/api/students', (req, res) => {
-  const { s, error } = readStudent(req.body);
+app.post('/api/students', async (req, res) => {
+  const { s, error } = await readStudent(req.body);
   if (error) return res.status(400).json({ error });
   try {
-    const r = db
+    const r = await db
       .prepare(
         `INSERT INTO students(lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,parent_name,parent_phone,consent)
-         VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent)`
+         VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent)
+         RETURNING id`
       )
-      .run(s);
-    if (s.rfid_uid) db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
-    res.json({ id: Number(r.lastInsertRowid) });
+      .get(s);
+    if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
+    res.json({ id: Number(r.id) });
   } catch (e) {
+    if (e.code !== '23505' && e.errcode !== 1555 && e.errcode !== 2067) throw e;
     res.status(400).json({ error: 'LRN or RFID card is already assigned to another student' });
   }
 });
 
-app.delete('/api/students', (req, res) => {
+app.delete('/api/students', async (req, res) => {
   const { ids } = req.body;
   if (
     !Array.isArray(ids) ||
@@ -321,47 +362,49 @@ app.delete('/api/students', (req, res) => {
   }
 
   const uniqueIds = [...new Set(ids)];
-  const deactivate = db.prepare('UPDATE students SET active=0, rfid_uid=NULL WHERE id=? AND active=1');
-  const removeSelected = db.transaction(() => {
+  const removeSelected = await db.transaction(async () => {
     let removed = 0;
-    for (const id of uniqueIds) removed += Number(deactivate.run(id).changes);
+    for (const id of uniqueIds) {
+      removed += Number((await db.prepare('UPDATE students SET active=0, rfid_uid=NULL WHERE id=? AND active=1').run(id)).changes);
+    }
     return removed;
   });
 
-  res.json({ removed: removeSelected() });
+  res.json({ removed });
 });
 
-app.put('/api/students/:id', (req, res) => {
-  const { s, error } = readStudent(req.body);
+app.put('/api/students/:id', async (req, res) => {
+  const { s, error } = await readStudent(req.body);
   if (error) return res.status(400).json({ error });
   try {
-    db.prepare(
+    await db.prepare(
       `UPDATE students SET lrn=@lrn,name=@name,surname=@surname,first_name=@first_name,middle_name=@middle_name,name_extension=@name_extension,
        grade=@grade,section=@section,rfid_uid=@rfid_uid,
        parent_name=@parent_name,parent_phone=@parent_phone,consent=@consent WHERE id=@id`
     ).run({ ...s, id: req.params.id });
-    if (s.rfid_uid) db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
+    if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
     res.json({ ok: true });
   } catch (e) {
+    if (e.code !== '23505' && e.errcode !== 1555 && e.errcode !== 2067) throw e;
     res.status(400).json({ error: 'LRN or RFID card is already assigned to another student' });
   }
 });
 
 // Deactivate (keeps attendance history) and free the card for reuse.
-app.delete('/api/students/:id', (req, res) => {
-  db.prepare('UPDATE students SET active=0, rfid_uid=NULL WHERE id=?').run(req.params.id);
+app.delete('/api/students/:id', async (req, res) => {
+  await db.prepare('UPDATE students SET active=0, rfid_uid=NULL WHERE id=?').run(req.params.id);
   res.json({ ok: true });
 });
 
-app.get('/api/unknown', (req, res) =>
-  res.json(db.prepare('SELECT * FROM unknown_scans ORDER BY ts DESC LIMIT 5').all())
+app.get('/api/unknown', async (req, res) =>
+  res.json(await db.prepare('SELECT * FROM unknown_scans ORDER BY ts DESC LIMIT 5').all())
 );
 
 // ---------- live data ----------
-app.get('/api/feed', (req, res) => {
+app.get('/api/feed', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 25, 100);
   res.json(
-    db
+    await db
       .prepare(
         `SELECT sc.id, sc.ts, sc.type, s.name, s.grade, s.section,
                 CASE
@@ -377,20 +420,16 @@ app.get('/api/feed', (req, res) => {
   );
 });
 
-app.delete('/api/feed', (req, res) => {
-  const result = db.prepare('DELETE FROM scans').run();
+app.delete('/api/feed', async (req, res) => {
+  const result = await db.prepare('DELETE FROM scans').run();
   res.json({ ok: true, deleted: Number(result.changes) });
 });
 
-app.get('/api/today', (req, res) => {
+app.get('/api/today', async (req, res) => {
   const { date } = nowManila();
-  const students = db.prepare('SELECT id, grade, section FROM students WHERE active=1').all();
-  const att = new Map(
-    db
-      .prepare('SELECT * FROM attendance WHERE date=?')
-      .all(date)
-      .map((a) => [a.student_id, a])
-  );
+  const students = await db.prepare('SELECT id, grade, section FROM students WHERE active=1').all();
+  const attendanceRows = await db.prepare('SELECT * FROM attendance WHERE date=?').all(date);
+  const att = new Map(attendanceRows.map((a) => [a.student_id, a]));
   const blank = () => ({ enrolled: 0, present: 0, late: 0, notIn: 0, inCampus: 0 });
   const total = blank();
   const byClass = {};
@@ -410,7 +449,7 @@ app.get('/api/today', (req, res) => {
   }
   res.json({
     date,
-    schoolDay: isSchoolDay(date),
+    schoolDay: await isSchoolDay(date),
     total,
     classes: Object.values(byClass).sort((a, b) => a.grade - b.grade || a.section.localeCompare(b.section)),
   });
@@ -422,10 +461,10 @@ function parseClass(cls) {
   return { grade: parseInt(grade, 10), section };
 }
 
-app.get('/api/attendance', (req, res) => {
+app.get('/api/attendance', async (req, res) => {
   const date = req.query.date || nowManila().date;
   const c = parseClass(req.query.cls);
-  const rows = db
+  const rows = await db
     .prepare(
       `SELECT s.id, s.lrn, s.name, s.surname, s.first_name, s.middle_name, s.name_extension,
               s.grade, s.section, a.time_in, a.time_out
@@ -435,23 +474,23 @@ app.get('/api/attendance', (req, res) => {
        ORDER BY s.grade, s.section, s.name`
     )
     .all(...(c ? [date, c.grade, c.section] : [date]));
-  const lateTime = getSetting('late_time');
+  const lateTime = await getSetting('late_time');
   const attendanceRows = rows.map((row) => ({
     ...row,
     display_name: displayStudentName(row),
     full_name: fullStudentName(row),
     status: row.time_in ? (isAfterTime(row.time_in, lateTime) ? 'late' : 'present') : 'absent',
   }));
-  res.json({ date, schoolDay: isSchoolDay(date), rows: attendanceRows });
+  res.json({ date, schoolDay: await isSchoolDay(date), rows: attendanceRows });
 });
 
-app.get('/api/students/:id/attendance', (req, res) => {
+app.get('/api/students/:id/attendance', async (req, res) => {
   const id = Number(req.params.id);
   const month = String(req.query.month || '');
   if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid student id' });
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: 'Month must use YYYY-MM format' });
 
-  const student = db.prepare(
+  const student = await db.prepare(
     'SELECT id,lrn,name,surname,first_name,middle_name,name_extension,grade,section FROM students WHERE id=? AND active=1'
   ).get(id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
@@ -462,22 +501,20 @@ app.get('/api/students/:id/attendance', (req, res) => {
   const monthStart = `${month}-01`;
   const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
   const today = nowManila().date;
-  const attendance = new Map(
-    db.prepare('SELECT date,time_in FROM attendance WHERE student_id=? AND date BETWEEN ? AND ?')
-      .all(id, monthStart, monthEnd)
-      .map((row) => [row.date, row.time_in])
-  );
-  const holidays = new Set(db.prepare('SELECT date FROM holidays WHERE date BETWEEN ? AND ?')
-    .all(monthStart, monthEnd)
-    .map((row) => row.date));
-  const cutoff = getSetting('late_time');
+  const attendanceRows = await db.prepare('SELECT date,time_in FROM attendance WHERE student_id=? AND date BETWEEN ? AND ?')
+    .all(id, monthStart, monthEnd);
+  const attendance = new Map(attendanceRows.map((row) => [row.date, row.time_in]));
+  const holidayRows = await db.prepare('SELECT date FROM holidays WHERE date BETWEEN ? AND ?')
+    .all(monthStart, monthEnd);
+  const holidays = new Set(holidayRows.map((row) => row.date));
+  const cutoff = await getSetting('late_time');
   const totals = { present: 0, late: 0, absent: 0 };
   const days = [];
 
   for (let day = 1; day <= Number(monthEnd.slice(-2)); day++) {
     const date = `${month}-${String(day).padStart(2, '0')}`;
     let status;
-    if (!isSchoolDay(date, holidays)) status = 'no class';
+    if (!await isSchoolDay(date, holidays)) status = 'no class';
     else if (date > today) status = 'upcoming';
     else {
       const timeIn = attendance.get(date);
@@ -496,22 +533,22 @@ app.get('/api/students/:id/attendance', (req, res) => {
 });
 
 // ---------- actions ----------
-app.post('/api/simulate', (req, res) => {
-  const s = db.prepare('SELECT rfid_uid FROM students WHERE id=? AND active=1').get(req.body.student_id);
+app.post('/api/simulate', async (req, res) => {
+  const s = await db.prepare('SELECT rfid_uid FROM students WHERE id=? AND active=1').get(req.body.student_id);
   if (!s || !s.rfid_uid) return res.status(400).json({ error: 'Student has no RFID card assigned' });
-  const r = processTap(s.rfid_uid);
+  const r = await processTap(s.rfid_uid);
   res.status(200).json(r);
 });
 
 app.post('/api/notify-absent', async (req, res) => {
   const { date } = nowManila();
-  if (!isSchoolDay(date)) return res.status(400).json({ error: 'Today is not a school day' });
+  if (!await isSchoolDay(date)) return res.status(400).json({ error: 'Today is not a school day' });
   res.json(await sendAbsentNotices(date));
 });
 
-app.get('/api/notifications', (req, res) =>
+app.get('/api/notifications', async (req, res) =>
   res.json(
-    db
+    await db
       .prepare(
         `SELECT n.*, s.name FROM notifications n LEFT JOIN students s ON s.id=n.student_id
          ORDER BY n.id DESC LIMIT 200`
@@ -520,8 +557,8 @@ app.get('/api/notifications', (req, res) =>
   )
 );
 
-app.delete('/api/notifications', (req, res) => {
-  const result = db.prepare('DELETE FROM notifications').run();
+app.delete('/api/notifications', async (req, res) => {
+  const result = await db.prepare('DELETE FROM notifications').run();
   res.json({ ok: true, deleted: Number(result.changes) });
 });
 
@@ -536,14 +573,14 @@ function requestedRiskMonth(req, res) {
   return month;
 }
 
-app.get('/api/risk', (req, res) => {
+app.get('/api/risk', async (req, res) => {
   const month = requestedRiskMonth(req, res);
-  if (month) res.json(computeRisk(month));
+  if (month) res.json(await computeRisk(month));
 });
-app.get('/api/export/risk.csv', (req, res) => {
+app.get('/api/export/risk.csv', async (req, res) => {
   const month = requestedRiskMonth(req, res);
   if (!month) return;
-  const report = computeRisk(month);
+  const report = await computeRisk(month);
   const rows = [
     [`Early warning - ${month} (${report.days} school days)`],
     ['Level', 'Score', 'LRN', 'Name', 'Grade', 'Section', 'Absences', 'Lates', 'Consecutive absences', 'Attendance %', 'Why flagged', 'Suggested action', 'Parent', 'Phone'],
@@ -555,19 +592,19 @@ app.get('/api/export/risk.csv', (req, res) => {
 
 // ---------- SF2-style monthly export ----------
 // Layout inspired by DepEd School Form 2 (daily attendance). Review before official use.
-app.get('/api/export/sf2.csv', (req, res) => {
+app.get('/api/export/sf2.csv', async (req, res) => {
   const month = /^\d{4}-\d{2}$/.test(req.query.month || '') ? req.query.month : nowManila().date.slice(0, 7);
   const c = parseClass(req.query.cls);
   const [y, m] = month.split('-').map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const days = schoolDaysBetween(`${month}-01`, `${month}-${String(last).padStart(2, '0')}`);
-  const students = db
+  const days = await schoolDaysBetween(`${month}-01`, `${month}-${String(last).padStart(2, '0')}`);
+  const students = await db
     .prepare(
       `SELECT * FROM students WHERE active=1 ${c ? 'AND grade=? AND section=?' : ''} ORDER BY grade, section, name`
     )
     .all(...(c ? [c.grade, c.section] : []));
   const att = new Map();
-  for (const a of db
+  for (const a of await db
     .prepare('SELECT student_id, date, status FROM attendance WHERE date LIKE ?')
     .all(month + '-%'))
     att.set(a.student_id + '|' + a.date, a.status);
@@ -596,6 +633,15 @@ app.get('/api/export/sf2.csv', (req, res) => {
 // ---------- static dashboard ----------
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`RFID attendance running on http://localhost:${PORT}`);
-});
+if (require.main === module) {
+  appReady.then(() => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`RFID attendance running on http://localhost:${PORT}`);
+    });
+  }).catch((error) => {
+    console.error('Failed to initialize the database:', error);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { app, appReady };

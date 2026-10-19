@@ -46,7 +46,7 @@ async function sendSMS(phone, message) {
 }
 
 async function logAndSend(student, kind, date, message) {
-  if (getSetting('notify_enabled') !== '1') return false;
+  if (await getSetting('notify_enabled') !== '1') return false;
   // Data Privacy Act: only message parents who gave consent.
   if (!student.consent || !student.parent_phone) return false;
   let status = 'sent';
@@ -59,25 +59,26 @@ async function logAndSend(student, kind, date, message) {
   } catch (e) {
     status = 'failed: ' + e.message;
   }
-  db.prepare(
+  await db.prepare(
     'INSERT INTO notifications(student_id,kind,date,phone,message,status,provider,ts) VALUES(?,?,?,?,?,?,?,?)'
   ).run(student.id, kind, date, phone, message, status, provider, nowManila().ts);
   return status === 'sent';
 }
 
 function notifyParent(student, type, status, time, date) {
-  const school = getSetting('school_name');
-  const message =
-    type === 'IN'
-      ? `${school}: ${student.name} arrived at ${fmt12(time)}${status === 'late' ? ' (late)' : ''}.`
-      : `${school}: ${student.name} left school at ${fmt12(time)}.`;
-  return logAndSend(student, type, date, message);
+  return getSetting('school_name').then((school) => {
+    const message =
+      type === 'IN'
+        ? `${school}: ${student.name} arrived at ${fmt12(time)}${status === 'late' ? ' (late)' : ''}.`
+        : `${school}: ${student.name} left school at ${fmt12(time)}.`;
+    return logAndSend(student, type, date, message);
+  });
 }
 
 // Sends one "absent" SMS per student per day. Safe to press more than once.
 async function sendAbsentNotices(date) {
-  const school = getSetting('school_name');
-  const absentees = db
+  const school = await getSetting('school_name');
+  const absentees = await db
     .prepare(
       `SELECT s.* FROM students s
        WHERE s.active=1
@@ -89,8 +90,8 @@ async function sendAbsentNotices(date) {
   for (const s of absentees) {
     const msg = `${school}: ${s.name} was marked ABSENT today (${date}). If this is unexpected, please contact the class adviser.`;
     const delivered = await logAndSend(s, 'ABSENT', date, msg);
-    if (getSetting('notify_enabled') === '1' && s.consent && s.parent_phone) {
-      db.prepare('INSERT INTO absence_notices(student_id,date) VALUES(?,?)').run(s.id, date);
+    if ((await getSetting('notify_enabled')) === '1' && s.consent && s.parent_phone) {
+      await db.prepare('INSERT INTO absence_notices(student_id,date) VALUES(?,?) ON CONFLICT DO NOTHING').run(s.id, date);
     }
     if (delivered) sent++;
   }

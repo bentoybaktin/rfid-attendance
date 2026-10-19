@@ -18,7 +18,7 @@ const ACTIONS = {
   low: 'No action needed. Keep monitoring.',
 };
 
-function computeRisk(month) {
+async function computeRisk(month) {
   const today = nowManila().date;
   const currentMonth = today.slice(0, 7);
   const selectedMonth = month || currentMonth;
@@ -26,13 +26,13 @@ function computeRisk(month) {
   const monthStart = `${selectedMonth}-01`;
   const monthEnd = `${selectedMonth}-${String(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate()).padStart(2, '0')}`;
   const periodEnd = selectedMonth === currentMonth ? addDays(today, -1) : monthEnd;
-  const days = periodEnd < monthStart ? [] : schoolDaysBetween(monthStart, periodEnd);
+  const days = periodEnd < monthStart ? [] : await schoolDaysBetween(monthStart, periodEnd);
   const midpoint = Math.floor(new Date(Date.UTC(year, monthNumber, 0)).getUTCDate() / 2);
   const firstHalf = days.filter((day) => Number(day.slice(8)) <= midpoint);
   const secondHalf = days.filter((day) => Number(day.slice(8)) > midpoint);
 
   const rows = days.length
-    ? db
+    ? await db
         .prepare('SELECT student_id, date, status FROM attendance WHERE date BETWEEN ? AND ?')
         .all(days[0], days[days.length - 1])
     : [];
@@ -43,7 +43,7 @@ function computeRisk(month) {
   }
 
   const out = [];
-  for (const s of db.prepare('SELECT * FROM students WHERE active=1').all()) {
+  for (const s of await db.prepare('SELECT * FROM students WHERE active=1').all()) {
     const m = byStudent.get(s.id) || new Map();
     const absences = days.filter((d) => !m.has(d)).length;
     const lates = days.filter((d) => m.get(d) === 'late').length;

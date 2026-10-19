@@ -730,7 +730,7 @@ $('#accountForm').onsubmit = async (e) => {
 };
 
 $('#clearAllData').onclick = async () => {
-  if (!confirm('This permanently erases all saved records, previous account credentials, and settings from the database, then compacts the database and clears its write-ahead log. Admin/user accounts will be recreated using the configured environment credentials and settings will return to defaults. This cannot be undone. Continue?')) return;
+  if (!confirm('This permanently erases all saved records, previous account credentials, and settings from the database. Admin/user accounts will be recreated using configured credentials and settings will return to defaults. This cannot be undone. Continue?')) return;
   if (prompt('Type DELETE ALL to confirm permanently erasing all saved data.') !== 'DELETE ALL') {
     $('#clearAllDataMsg').textContent = 'Data clearing cancelled.';
     return;
@@ -757,7 +757,7 @@ $('#clearAllData').onclick = async () => {
     $('#setNotify').checked = settings.notify_enabled === '1';
     $('#accountUsername').value = username;
     selectedStudentIds.clear();
-    $('#clearAllDataMsg').textContent = `All saved data erased (${total} records); database compacted and write-ahead log cleared. Accounts were reset to configured credentials and settings returned to defaults.`;
+    $('#clearAllDataMsg').textContent = `All saved data erased (${total} records). Accounts were reset to configured credentials and settings returned to defaults.`;
     await Promise.all([
       loadOverview(),
       loadAttendance(),
