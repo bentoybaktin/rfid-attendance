@@ -57,6 +57,7 @@ Keep Neon credentials and all secrets in Vercel's environment-variable settings,
 
 - Each student can record four events per school day: morning **IN**, morning **OUT**, afternoon **IN**, and afternoon **OUT**.
 - Morning check-ins after the configured morning late cutoff are marked late; morning check-outs are accepted at or after morning class finishes. Afternoon check-ins follow the same rule using the afternoon cutoff and finish time.
+- After a student's morning **OUT**, that student must wait five minutes before recording afternoon **IN**. Earlier scans are rejected with a retry message; the wait is measured separately from each student's morning check-out.
 - Scans must occur in the expected class period and sequence. Wrong-period scans are rejected and listed under **Scans to review**; repeats within the configured debounce window and already-recorded events are ignored.
 - Unknown or inactive cards show **Try again** on the student scan screen and are remembered so staff can register them.
 - No tap on a school day = **absent**. Weekends and listed holidays are skipped.

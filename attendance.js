@@ -58,14 +58,26 @@ async function processTap(rawUid, when) {
     const last = await db
       .prepare('SELECT * FROM tap_state WHERE student_id=? AND date=?')
       .get(student.id, n.date);
-    if (last && Math.abs(epoch(n.ts) - epoch(last.ts)) / 1000 < debounce) {
-      return { code: 'ALREADY_RECORDED', message: 'Already recorded' };
-    }
-
     const attendance = await db
       .prepare('SELECT * FROM attendance WHERE student_id=? AND date=?')
       .get(student.id, n.date);
     const values = attendance || {};
+    if (values.morning_out && !values.afternoon_in) {
+      const morningOutAt = epoch(`${n.date}T${values.morning_out}`);
+      const secondsSinceMorningOut = (epoch(n.ts) - morningOutAt) / 1000;
+      if (secondsSinceMorningOut < 300) {
+        const remainingSeconds = Math.ceil(300 - secondsSinceMorningOut);
+        return {
+          code: 'LUNCH_BREAK',
+          message: 'Please wait 5 minutes after morning OUT before scanning for afternoon IN',
+          retry_after_seconds: remainingSeconds,
+        };
+      }
+    }
+    if (last && Math.abs(epoch(n.ts) - epoch(last.ts)) / 1000 < debounce) {
+      return { code: 'ALREADY_RECORDED', message: 'Already recorded' };
+    }
+
     if ((tapTime < schedule.morningEnd && values.morning_in) ||
         (tapTime >= schedule.morningEnd && tapTime < schedule.afternoonEnd &&
           values.afternoon_in && !values.afternoon_out) ||
@@ -141,6 +153,17 @@ async function processTap(rawUid, when) {
       ok: false,
       code: r.code,
       message: r.message,
+      http: 409,
+      student: publicStudent(student),
+    };
+  }
+  if (r.code === 'LUNCH_BREAK') {
+    await recordAttempt(student, uid, n, r.code, r.message, 'AFTERNOON_IN');
+    return {
+      ok: false,
+      code: r.code,
+      message: r.message,
+      retry_after_seconds: r.retry_after_seconds,
       http: 409,
       student: publicStudent(student),
     };
