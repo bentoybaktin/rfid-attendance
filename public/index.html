@@ -13,7 +13,21 @@
     <h1>RFID Attendance</h1>
     <p class="muted">Log In</p>
     <input id="username" placeholder="Username" autocomplete="username" required>
-    <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
+    <div class="password-field">
+      <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
+      <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <g class="password-eye-open">
+            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </g>
+          <g class="password-eye-closed">
+            <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+            <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+          </g>
+        </svg>
+      </button>
+    </div>
     <button type="submit">Sign in</button>
     <p id="loginErr" class="err"></p>
   </form>
@@ -311,16 +325,64 @@
       </div>
       <p class="muted">Enter a new password only if you want to change it. Existing passwords are never displayed.</p>
       <form id="accountForm" class="form">
-        <label>Current admin password <input id="currentAdminPassword" type="password" autocomplete="current-password" required></label>
+        <label>Current admin password
+          <span class="password-field">
+            <input id="currentAdminPassword" type="password" autocomplete="current-password" required>
+            <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <g class="password-eye-open">
+                  <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </g>
+                <g class="password-eye-closed">
+                  <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+                  <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                </g>
+              </svg>
+            </button>
+          </span>
+        </label>
         <fieldset class="account-credentials">
           <legend>Admin account</legend>
           <label>Admin username <input id="adminUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
-          <label>New admin password <input id="adminNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password"></label>
+          <label>New admin password
+            <span class="password-field">
+              <input id="adminNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password">
+              <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <g class="password-eye-open">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </g>
+                  <g class="password-eye-closed">
+                    <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+                    <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                  </g>
+                </svg>
+              </button>
+            </span>
+          </label>
         </fieldset>
         <fieldset class="account-credentials">
           <legend>User account</legend>
           <label>User username <input id="userUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
-          <label>New user password <input id="userNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password"></label>
+          <label>New user password
+            <span class="password-field">
+              <input id="userNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password">
+              <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <g class="password-eye-open">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </g>
+                  <g class="password-eye-closed">
+                    <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+                    <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                  </g>
+                </svg>
+              </button>
+            </span>
+          </label>
         </fieldset>
         <button id="saveAccountCredentials" type="submit">Save account changes</button>
         <p id="accountMsg" class="muted" role="status"></p>

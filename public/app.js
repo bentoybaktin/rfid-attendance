@@ -89,12 +89,32 @@ $('#loginForm').onsubmit = async (e) => {
     localStorage.setItem('username', username);
     $('#username').value = '';
     $('#pw').value = '';
+    hidePasswordFields($('#loginForm'));
     $('#loginErr').textContent = '';
     await boot();
   } catch (err) {
     $('#loginErr').textContent = err.message;
   }
 };
+
+document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+  button.onclick = () => {
+    const input = button.closest('.password-field').querySelector('input');
+    const showingPassword = input.type === 'password';
+    input.type = showingPassword ? 'text' : 'password';
+    button.setAttribute('aria-pressed', String(showingPassword));
+    button.setAttribute('aria-label', showingPassword ? 'Hide password' : 'Show password');
+  };
+});
+
+function hidePasswordFields(container) {
+  container.querySelectorAll('[data-password-toggle]').forEach((button) => {
+    const input = button.closest('.password-field').querySelector('input');
+    input.type = 'password';
+    button.setAttribute('aria-pressed', 'false');
+    button.setAttribute('aria-label', 'Show password');
+  });
+}
 
 function logout() {
   localStorage.removeItem('token');
@@ -839,6 +859,7 @@ function updateThemeControl(darkModeEnabled) {
 updateThemeControl(document.documentElement.dataset.theme === 'dark');
 
 function closeAccountModal() {
+  hidePasswordFields($('#accountModal'));
   $('#accountModal').classList.add('hidden');
   document.body.classList.remove('modal-open');
   $('#openAccountModal').focus();
@@ -855,6 +876,7 @@ $('#openAccountModal').onclick = async () => {
     $('#currentAdminPassword').value = '';
     $('#adminNewPassword').value = '';
     $('#userNewPassword').value = '';
+    hidePasswordFields($('#accountModal'));
     $('#accountModal').classList.remove('hidden');
     document.body.classList.add('modal-open');
     $('#currentAdminPassword').focus();
