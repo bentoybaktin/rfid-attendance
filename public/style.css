@@ -296,6 +296,7 @@ td.num, th.num { text-align: right; }
 }
 .badge.present, .badge.in, .badge.low, .badge.sent { background: var(--ok-bg); color: var(--ok); }
 .badge.late, .badge.medium, .badge.out { background: var(--warn-bg); color: var(--warn); }
+.badge.half-day { background: var(--warn-bg); color: var(--warn); }
 .badge.absent, .badge.high, .badge.failed { background: var(--bad-bg); color: var(--bad); }
 
 .feed { list-style: none; margin: 0; padding: 0; max-height: 520px; overflow-y: auto; }

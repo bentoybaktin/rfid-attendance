@@ -62,14 +62,27 @@ async function processTap(rawUid, when) {
       .prepare('SELECT * FROM attendance WHERE student_id=? AND date=?')
       .get(student.id, n.date);
     const values = attendance || {};
-    if (values.morning_out && !values.afternoon_in) {
-      const morningOutAt = epoch(`${n.date}T${values.morning_out}`);
-      const secondsSinceMorningOut = (epoch(n.ts) - morningOutAt) / 1000;
-      if (secondsSinceMorningOut < 300) {
-        const remainingSeconds = Math.ceil(300 - secondsSinceMorningOut);
+    const inMorningPeriod = tapTime < schedule.morningEnd;
+    const beforeAfternoonEnd = tapTime < schedule.afternoonEnd;
+    const arrivedForAfternoonOnly =
+      !values.morning_in &&
+      !values.morning_out &&
+      !values.afternoon_in &&
+      !inMorningPeriod &&
+      beforeAfternoonEnd;
+    const lunchEndsAt = values.morning_out
+      ? epoch(`${n.date}T${values.morning_out}`)
+      : arrivedForAfternoonOnly
+        ? epoch(`${n.date}T${schedule.morningEnd}:00`)
+        : null;
+    if (lunchEndsAt !== null && !values.afternoon_in) {
+      const secondsSinceLunchStarted = epoch(n.ts) - lunchEndsAt;
+      const secondsUntilAfternoonIn = 300 - secondsSinceLunchStarted / 1000;
+      if (secondsUntilAfternoonIn > 0) {
+        const remainingSeconds = Math.ceil(secondsUntilAfternoonIn);
         return {
           code: 'LUNCH_BREAK',
-          message: 'Please wait 5 minutes after morning OUT before scanning for afternoon IN',
+          message: `Please wait 5 minutes after ${values.morning_out ? 'morning OUT' : 'morning class ends'} before scanning for afternoon IN`,
           retry_after_seconds: remainingSeconds,
         };
       }
@@ -90,11 +103,13 @@ async function processTap(rawUid, when) {
       { field: 'afternoon_in', type: 'AFTERNOON_IN' },
       { field: 'afternoon_out', type: 'AFTERNOON_OUT' },
     ];
-    const expected = events.find((event) => !values[event.field]);
+    const expected = arrivedForAfternoonOnly
+      ? events.find((event) => event.type === 'AFTERNOON_IN')
+      : values.status === 'half_day' && !values.afternoon_out
+        ? events.find((event) => event.type === 'AFTERNOON_OUT')
+      : events.find((event) => !values[event.field]);
     if (!expected) return { code: 'ALREADY_RECORDED', message: 'Already recorded' };
 
-    const inMorningPeriod = tapTime < schedule.morningEnd;
-    const beforeAfternoonEnd = tapTime < schedule.afternoonEnd;
     const inExpectedPeriod =
       (expected.type === 'MORNING_IN' && inMorningPeriod) ||
       (expected.type === 'MORNING_OUT' && !inMorningPeriod && beforeAfternoonEnd) ||
@@ -124,6 +139,13 @@ async function processTap(rawUid, when) {
          ON CONFLICT(student_id,date) DO UPDATE SET
            time_in=excluded.time_in,status=excluded.status,morning_in=excluded.morning_in`
       ).run(student.id, n.date, n.time, status, n.time);
+    } else if (arrivedForAfternoonOnly && isAfternoonIn) {
+      await db.prepare(
+        `INSERT INTO attendance(student_id,date,time_in,time_out,status,afternoon_in)
+         VALUES(?,?,NULL,NULL,'half_day',?)
+         ON CONFLICT(student_id,date) DO UPDATE SET
+           status='half_day',afternoon_in=excluded.afternoon_in`
+      ).run(student.id, n.date, n.time);
     } else {
       const column = expected.field;
       await db.prepare(`UPDATE attendance SET ${column}=? WHERE student_id=? AND date=?`)

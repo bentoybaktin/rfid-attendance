@@ -45,12 +45,21 @@ async function computeRisk(month) {
   const out = [];
   for (const s of await db.prepare('SELECT * FROM students WHERE active=1').all()) {
     const m = byStudent.get(s.id) || new Map();
-    const absences = days.filter((d) => !m.has(d)).length;
+    const absences = days.reduce((total, day) => {
+      const status = m.get(day);
+      return total + (!status ? 1 : status === 'half_day' ? 0.5 : 0);
+    }, 0);
     const lates = days.filter((d) => m.get(d) === 'late').length;
     let streak = 0;
     for (let i = days.length - 1; i >= 0 && !m.has(days[i]); i--) streak++;
-    const recentAbs = secondHalf.filter((d) => !m.has(d)).length;
-    const priorAbs = firstHalf.filter((d) => !m.has(d)).length;
+    const recentAbs = secondHalf.reduce((total, day) => {
+      const status = m.get(day);
+      return total + (!status ? 1 : status === 'half_day' ? 0.5 : 0);
+    }, 0);
+    const priorAbs = firstHalf.reduce((total, day) => {
+      const status = m.get(day);
+      return total + (!status ? 1 : status === 'half_day' ? 0.5 : 0);
+    }, 0);
 
     const score =
       absences * WEIGHTS.absence +
@@ -76,6 +85,7 @@ async function computeRisk(month) {
       parent_phone: s.parent_phone,
       days: days.length,
       absences,
+      half_days: days.filter((day) => m.get(day) === 'half_day').length,
       lates,
       streak,
       attendance_rate: days.length ? Math.round(((days.length - absences) / days.length) * 100) : 0,

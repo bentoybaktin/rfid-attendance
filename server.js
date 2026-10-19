@@ -587,7 +587,7 @@ app.get('/api/today', async (req, res) => {
   const students = await db.prepare('SELECT id, grade, section FROM students WHERE active=1').all();
   const attendanceRows = await db.prepare('SELECT * FROM attendance WHERE date=?').all(date);
   const att = new Map(attendanceRows.map((a) => [a.student_id, a]));
-  const blank = () => ({ enrolled: 0, present: 0, late: 0, notIn: 0, inCampus: 0 });
+  const blank = () => ({ enrolled: 0, present: 0, late: 0, halfDay: 0, notIn: 0, inCampus: 0 });
   const total = blank();
   const byClass = {};
   const current = nowManila();
@@ -602,15 +602,18 @@ app.get('/api/today', async (req, res) => {
       t.enrolled++;
       if (!a) t.notIn++;
       else {
-        const late = a.status === 'late' ||
-          (a.afternoon_in && afternoonLate && isAfterTime(a.afternoon_in, afternoonLate));
-        if (late) t.late++;
-        else t.present++;
-        const inMorning = morningEnd && current.time < morningEnd;
-        const inAfternoon = morningEnd && afternoonEnd && current.time >= morningEnd && current.time < afternoonEnd;
-        if ((inMorning && a.morning_in && !a.morning_out) ||
-            (inAfternoon && a.afternoon_in && !a.afternoon_out)) t.inCampus++;
+        if (a.status === 'half_day') t.halfDay++;
+        else {
+          const late = a.status === 'late' ||
+            (a.afternoon_in && afternoonLate && isAfterTime(a.afternoon_in, afternoonLate));
+          if (late) t.late++;
+          else t.present++;
+        }
       }
+      const inMorning = morningEnd && current.time < morningEnd;
+      const inAfternoon = morningEnd && afternoonEnd && current.time >= morningEnd && current.time < afternoonEnd;
+      if (a && ((inMorning && a.morning_in && !a.morning_out) ||
+          (inAfternoon && a.afternoon_in && !a.afternoon_out))) t.inCampus++;
     }
   }
   res.json({
@@ -648,7 +651,9 @@ app.get('/api/attendance', async (req, res) => {
     ...row,
     display_name: displayStudentName(row),
     full_name: fullStudentName(row),
-    status: row.time_in ? (isAfterTime(row.time_in, morningLateTime) ? 'late' : 'present') : 'absent',
+    status: row.morning_in
+      ? (isAfterTime(row.morning_in, morningLateTime) ? 'late' : 'present')
+      : row.afternoon_in ? 'half day' : 'absent',
     morning_status: row.morning_in
       ? (isAfterTime(row.morning_in, morningLateTime) ? 'late' : 'present')
       : 'absent',
@@ -685,7 +690,7 @@ app.get('/api/students/:id/attendance', async (req, res) => {
     .all(monthStart, monthEnd);
   const holidays = new Set(holidayRows.map((row) => row.date));
   const cutoff = await getSetting('morning_late_time') || await getSetting('late_time');
-  const totals = { present: 0, late: 0, absent: 0 };
+  const totals = { present: 0, late: 0, half_day: 0, absent: 0 };
   const days = [];
 
   for (let day = 1; day <= Number(monthEnd.slice(-2)); day++) {
@@ -696,9 +701,10 @@ app.get('/api/students/:id/attendance', async (req, res) => {
     else {
       const dayAttendance = attendance.get(date);
       const timeIn = dayAttendance && (dayAttendance.morning_in || dayAttendance.time_in);
-      if (!timeIn) status = 'absent';
+      if (!timeIn && dayAttendance && dayAttendance.afternoon_in) status = 'half day';
+      else if (!timeIn) status = 'absent';
       else status = isAfterTime(timeIn, cutoff) ? 'late' : 'present';
-      totals[status]++;
+      totals[status === 'half day' ? 'half_day' : status]++;
     }
     const dayAttendance = attendance.get(date) || {};
     days.push({
@@ -795,20 +801,21 @@ app.get('/api/export/sf2.csv', async (req, res) => {
   const today = nowManila().date;
   const rows = [
     [`School Form 2 (style) - Daily attendance - ${month}`],
-    ['Legend: blank = present, L = late (counted present), x = absent'],
-    ['LRN', 'Name', 'Grade', 'Section', ...days.map((d) => Number(d.slice(8))), 'Days present', 'Days late', 'Days absent'],
+    ['Legend: blank = present, L = late, H = half day (morning absent, afternoon present), x = absent'],
+    ['LRN', 'Name', 'Grade', 'Section', ...days.map((d) => Number(d.slice(8))), 'Attendance-day equivalents', 'Days late', 'Days absent', 'Half days'],
   ];
   for (const s of students) {
-    let present = 0, late = 0, absent = 0;
+    let present = 0, late = 0, absent = 0, halfDays = 0;
     const cells = days.map((d) => {
       if (d > today) return '';
       const st = att.get(s.id + '|' + d);
       if (!st) { absent++; return 'x'; }
+      if (st === 'half_day') { present += 0.5; absent += 0.5; halfDays++; return 'H'; }
       present++;
       if (st === 'late') { late++; return 'L'; }
       return '';
     });
-    rows.push([s.lrn, s.name, s.grade, s.section, ...cells, present, late, absent]);
+    rows.push([s.lrn, s.name, s.grade, s.section, ...cells, present, late, absent, halfDays]);
   }
   sendCsv(res, `sf2-${month}.csv`, rows);
 });

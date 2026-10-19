@@ -267,6 +267,7 @@ async function loadOverview() {
     ['', t.enrolled, 'Enrolled'],
     ['ok', t.present, 'On time'],
     ['warn', t.late, 'Late'],
+    ['warn', t.halfDay, 'Half day'],
     ['bad', t.notIn, 'Not yet in / absent'],
     ['', t.inCampus, 'On campus now'],
   ]
@@ -274,13 +275,13 @@ async function loadOverview() {
     .join('');
 
   $('#byClass').innerHTML =
-    '<tr><th>Section</th><th class="num">On time</th><th class="num">Late</th><th class="num">Not in</th><th class="num">Total</th></tr>' +
+    '<tr><th>Section</th><th class="num">On time</th><th class="num">Late</th><th class="num">Half day</th><th class="num">Not in</th><th class="num">Total</th></tr>' +
     (today.classes
       .map(
         (c) =>
-          `<tr><td>${esc(clsLabel(c))}</td><td class="num">${c.present}</td><td class="num">${c.late}</td><td class="num">${c.notIn}</td><td class="num">${c.enrolled}</td></tr>`
+          `<tr><td>${esc(clsLabel(c))}</td><td class="num">${c.present}</td><td class="num">${c.late}</td><td class="num">${c.halfDay}</td><td class="num">${c.notIn}</td><td class="num">${c.enrolled}</td></tr>`
       )
-      .join('') || '<tr><td colspan="5" class="muted">No student data yet.</td></tr>');
+      .join('') || '<tr><td colspan="6" class="muted">No student data yet.</td></tr>');
 
   $('#feed').innerHTML =
     feed
@@ -393,9 +394,10 @@ async function showStudentMonthlyAttendance(studentId) {
     $('#studentAttendanceSummary').innerHTML = [
       ['present', 'Present'],
       ['late', 'Late'],
+      ['half_day', 'Half day'],
       ['absent', 'Absent'],
     ]
-      .map(([key, label]) => `<div class="card ${key === 'late' ? 'warn' : key === 'absent' ? 'bad' : 'ok'}"><div class="n">${report.totals[key]}</div><div class="l">${label}</div></div>`)
+      .map(([key, label]) => `<div class="card ${key === 'late' || key === 'half_day' ? 'warn' : key === 'absent' ? 'bad' : 'ok'}"><div class="n">${report.totals[key]}</div><div class="l">${label}</div></div>`)
       .join('');
     $('#studentAttendanceTable').innerHTML =
       '<tr><th>Date</th><th>Day</th><th>Morning in</th><th>Morning out</th><th>Afternoon in</th><th>Afternoon out</th><th>Status</th></tr>' +
@@ -404,7 +406,7 @@ async function showStudentMonthlyAttendance(studentId) {
           `<tr><td>${esc(day.date)}</td><td>${esc(day.weekday)}</td>
            <td>${esc(hhmm(day.morning_in))}</td><td>${esc(hhmm(day.morning_out))}</td>
            <td>${esc(hhmm(day.afternoon_in))}</td><td>${esc(hhmm(day.afternoon_out))}</td>
-           <td>${badge(day.status === 'present' ? 'present' : day.status === 'late' ? 'late' : day.status === 'absent' ? 'absent' : '', day.status)}</td></tr>`
+           <td>${badge(day.status === 'present' ? 'present' : day.status === 'late' ? 'late' : day.status === 'half day' ? 'half-day' : day.status === 'absent' ? 'absent' : '', day.status)}</td></tr>`
         )
         .join('');
   } catch (err) {
