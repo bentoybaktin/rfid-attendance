@@ -44,6 +44,7 @@ Pending queue[QMAX];
 int qLen = 0;
 
 String lastUid = "";
+String lastResponseBody = "";
 unsigned long lastUidMs = 0;
 unsigned long lastFlushMs = 0;
 
@@ -78,6 +79,7 @@ void connectWifi() {
 
 // Returns the HTTP status code, or -1 if the server could not be reached.
 int postTap(const String& uid, const String& ts) {
+  lastResponseBody = "";
   if (WiFi.status() != WL_CONNECTED) return -1;
   HTTPClient http;
   http.setTimeout(4000);
@@ -88,6 +90,7 @@ int postTap(const String& uid, const String& ts) {
   if (ts.length()) body += ",\"ts\":\"" + ts + "\"";
   body += "}";
   int code = http.POST(body);
+  if (code > 0) lastResponseBody = http.getString();
   http.end();
   return code > 0 ? code : -1;
 }
@@ -150,5 +153,6 @@ void loop() {
     signal(true);  // card was read; it will sync later
     return;
   }
+  if (lastResponseBody.length()) Serial.println("Reader response: " + lastResponseBody);
   signal(code == 200);
 }

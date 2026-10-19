@@ -56,6 +56,25 @@
       <button data-tab="risk">Early warning</button>
       <button data-tab="notifications">SMS log</button>
       <button data-tab="settings">Settings</button>
+      <div id="navAppearance">
+        <label class="theme-switch" for="darkModeToggle">
+          <span id="themeModeLabel">Light mode</span>
+          <span class="theme-switch-options">
+            <svg id="lightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+            </svg>
+            <span class="theme-switch-control">
+              <input id="darkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
+              <span class="theme-switch-track" aria-hidden="true"></span>
+            </span>
+            <svg id="darkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+            </svg>
+          </span>
+        </label>
+        <p id="themeMsg" class="muted" role="status">Light mode is on. Theme choice is saved in this browser.</p>
+      </div>
       <button id="logout" class="ghost" type="button">Log out</button>
     </nav>
   </header>
@@ -73,6 +92,10 @@
           </div>
           <ul id="feed" class="feed"></ul>
           <p id="feedMsg" class="muted" role="status"></p>
+        </div>
+        <div class="panel">
+          <h2>Scans to review</h2>
+          <table id="scanAttemptsTable"></table>
         </div>
         <div>
           <div class="panel">
@@ -238,10 +261,20 @@
     <section id="tab-settings" class="tab hidden">
       <div class="grid2">
         <div class="panel">
-          <h2>School settings</h2>
+          <h2>Subject settings</h2>
           <form id="setForm" class="form">
-            <label>School name <input id="setName"></label>
-            <label>Late after (24-hour) <input id="setLate" type="time" required></label>
+            <label>Subject <input id="setName"></label>
+            <fieldset class="schedule-settings">
+              <legend>Morning class</legend>
+              <label>Late after <input id="morningLateTime" type="time" required></label>
+              <label>Class finishes <input id="morningEndTime" type="time" required></label>
+            </fieldset>
+            <fieldset class="schedule-settings">
+              <legend>Afternoon class</legend>
+              <label>Late after <input id="afternoonLateTime" type="time" required></label>
+              <label>Class finishes <input id="afternoonEndTime" type="time" required></label>
+            </fieldset>
+            <p class="muted">Morning and afternoon times must be in order. Each student can record one IN and one OUT for each class period.</p>
             <label>Ignore repeat taps within (seconds) <input id="setDebounce" type="number" min="0"></label>
             <label class="check"><input id="setNotify" type="checkbox"> Send parent SMS on tap</label>
             <button type="submit">Save settings</button>
@@ -259,14 +292,9 @@
           <table id="holTable"></table>
         </div>
         <div class="panel">
-          <h2>Admin account</h2>
-          <form id="accountForm" class="form">
-            <label>Username <input id="accountUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
-            <label>Current password <input id="accountCurrentPassword" type="password" autocomplete="current-password" required></label>
-            <label>New password <input id="accountNewPassword" type="password" autocomplete="new-password" minlength="8" required></label>
-            <button type="submit">Change username and password</button>
-            <p id="accountMsg" class="muted" role="status"></p>
-          </form>
+          <h2>Account access</h2>
+          <p class="muted">Update the admin and user sign-in usernames or passwords.</p>
+          <button id="openAccountModal" type="button">Change password</button>
         </div>
         <div class="panel">
           <h2>Clear all saved data</h2>
@@ -277,6 +305,30 @@
       </div>
     </section>
   </main>
+  <div id="accountModal" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
+    <section class="panel student-modal-panel account-modal-panel">
+      <div class="row">
+        <h2 id="accountModalTitle">Change account usernames and passwords</h2>
+        <button id="closeAccountModal" type="button" class="ghost" aria-label="Close account settings">Close</button>
+      </div>
+      <p class="muted">Enter a new password only if you want to change it. Existing passwords are never displayed.</p>
+      <form id="accountForm" class="form">
+        <label>Current admin password <input id="currentAdminPassword" type="password" autocomplete="current-password" required></label>
+        <fieldset class="account-credentials">
+          <legend>Admin account</legend>
+          <label>Admin username <input id="adminUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
+          <label>New admin password <input id="adminNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password"></label>
+        </fieldset>
+        <fieldset class="account-credentials">
+          <legend>User account</legend>
+          <label>User username <input id="userUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
+          <label>New user password <input id="userNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password"></label>
+        </fieldset>
+        <button id="saveAccountCredentials" type="submit">Save account changes</button>
+        <p id="accountMsg" class="muted" role="status"></p>
+      </form>
+    </section>
+  </div>
 </div>
 
 <script src="app.js"></script>

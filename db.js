@@ -151,9 +151,21 @@ CREATE TABLE IF NOT EXISTS tap_state(
 );
 CREATE TABLE IF NOT EXISTS attendance(
   student_id INTEGER NOT NULL, date TEXT NOT NULL, time_in TEXT, time_out TEXT,
-  status TEXT NOT NULL, PRIMARY KEY(student_id, date)
+  status TEXT NOT NULL, morning_in TEXT, morning_out TEXT, afternoon_in TEXT, afternoon_out TEXT,
+  PRIMARY KEY(student_id, date)
 );
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS morning_in TEXT;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS morning_out TEXT;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS afternoon_in TEXT;
+ALTER TABLE attendance ADD COLUMN IF NOT EXISTS afternoon_out TEXT;
+UPDATE attendance SET morning_in=time_in WHERE morning_in IS NULL AND time_in IS NOT NULL;
+UPDATE attendance SET morning_out=time_out WHERE morning_out IS NULL AND time_out IS NOT NULL;
 CREATE TABLE IF NOT EXISTS unknown_scans(uid TEXT PRIMARY KEY, ts TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS scan_attempts(
+  id SERIAL PRIMARY KEY, student_id INTEGER, uid TEXT, ts TEXT NOT NULL, date TEXT NOT NULL,
+  code TEXT NOT NULL, message TEXT NOT NULL, expected_type TEXT
+);
+ALTER TABLE scan_attempts ADD COLUMN IF NOT EXISTS expected_type TEXT;
 CREATE TABLE IF NOT EXISTS notifications(
   id SERIAL PRIMARY KEY, student_id INTEGER, kind TEXT, date TEXT, phone TEXT,
   message TEXT, status TEXT, provider TEXT, ts TEXT
@@ -195,8 +207,9 @@ if (usePostgres) {
     );
     CREATE TABLE IF NOT EXISTS scans(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER NOT NULL,uid TEXT,ts TEXT NOT NULL,date TEXT NOT NULL,type TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS tap_state(student_id INTEGER NOT NULL,date TEXT NOT NULL,ts TEXT NOT NULL,type TEXT NOT NULL,PRIMARY KEY(student_id,date));
-    CREATE TABLE IF NOT EXISTS attendance(student_id INTEGER NOT NULL,date TEXT NOT NULL,time_in TEXT,time_out TEXT,status TEXT NOT NULL,PRIMARY KEY(student_id,date));
+    CREATE TABLE IF NOT EXISTS attendance(student_id INTEGER NOT NULL,date TEXT NOT NULL,time_in TEXT,time_out TEXT,status TEXT NOT NULL,morning_in TEXT,morning_out TEXT,afternoon_in TEXT,afternoon_out TEXT,PRIMARY KEY(student_id,date));
     CREATE TABLE IF NOT EXISTS unknown_scans(uid TEXT PRIMARY KEY,ts TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS scan_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,uid TEXT,ts TEXT NOT NULL,date TEXT NOT NULL,code TEXT NOT NULL,message TEXT NOT NULL,expected_type TEXT);
     CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,kind TEXT,date TEXT,phone TEXT,message TEXT,status TEXT,provider TEXT,ts TEXT);
     CREATE TABLE IF NOT EXISTS absence_notices(student_id INTEGER NOT NULL,date TEXT NOT NULL,PRIMARY KEY(student_id,date));
     CREATE TABLE IF NOT EXISTS holidays(date TEXT PRIMARY KEY,name TEXT);
@@ -210,6 +223,14 @@ if (usePostgres) {
   for (const [name, type] of [['surname', 'TEXT'], ['first_name', 'TEXT'], ['middle_name', 'TEXT'], ['name_extension', 'TEXT']]) {
     if (!columns.has(name)) sqlite.exec(`ALTER TABLE students ADD COLUMN ${name} ${type}`);
   }
+  const attendanceColumns = new Set(sqlite.prepare('PRAGMA table_info(attendance)').all().map((column) => column.name));
+  for (const name of ['morning_in', 'morning_out', 'afternoon_in', 'afternoon_out']) {
+    if (!attendanceColumns.has(name)) sqlite.exec(`ALTER TABLE attendance ADD COLUMN ${name} TEXT`);
+  }
+  const attemptColumns = new Set(sqlite.prepare('PRAGMA table_info(scan_attempts)').all().map((column) => column.name));
+  if (!attemptColumns.has('expected_type')) sqlite.exec('ALTER TABLE scan_attempts ADD COLUMN expected_type TEXT');
+  sqlite.exec('UPDATE attendance SET morning_in=time_in WHERE morning_in IS NULL AND time_in IS NOT NULL');
+  sqlite.exec('UPDATE attendance SET morning_out=time_out WHERE morning_out IS NULL AND time_out IS NOT NULL');
   sqlite.prepare('INSERT OR IGNORE INTO sections(grade,section) SELECT DISTINCT grade,section FROM students').run();
   sqlite.prepare(`INSERT OR IGNORE INTO tap_state(student_id,date,ts,type)
     SELECT sc.student_id,sc.date,sc.ts,sc.type FROM scans sc WHERE sc.id=(
@@ -220,7 +241,16 @@ if (usePostgres) {
   ready = Promise.resolve();
 }
 
-const DEFAULTS = { school_name: 'Sample National High School', late_time: '07:30', notify_enabled: '1', debounce_sec: '60' };
+const DEFAULTS = {
+  school_name: 'Sample National High School',
+  late_time: '07:30',
+  morning_late_time: '',
+  morning_end_time: '',
+  afternoon_late_time: '',
+  afternoon_end_time: '',
+  notify_enabled: '1',
+  debounce_sec: '60',
+};
 
 function nowManila() {
   const iso = new Date(Date.now() + 8 * 3600 * 1000).toISOString();

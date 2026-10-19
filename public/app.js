@@ -4,6 +4,14 @@ const esc = (s) =>
 const clsLabel = (c) => `Grade ${c.grade} - ${c.section}`;
 const hhmm = (t) => (t ? t.slice(0, 5) : '');
 
+function setTheme(theme) {
+  const selectedTheme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = selectedTheme;
+  localStorage.setItem('theme', selectedTheme);
+}
+
+setTheme(localStorage.getItem('theme'));
+
 let token = localStorage.getItem('token') || '';
 let role = localStorage.getItem('role') || '';
 let username = localStorage.getItem('username') || '';
@@ -16,6 +24,7 @@ let timer = null;
 let userTimer = null;
 let userHideTimer = null;
 let lastUserScanId = 0;
+let lastUserAttemptId = 0;
 let currentTab = 'overview';
 
 // ---------- API ----------
@@ -109,7 +118,8 @@ async function boot() {
     const baseline = await api('/user/latest?after=0');
     $('#userSchoolName').textContent = baseline.school_name;
     document.title = baseline.school_name + ' - Student Scan';
-    lastUserScanId = baseline.latest ? Number(baseline.latest.scan_id) : 0;
+    lastUserScanId = Number(baseline.scan_cursor) || 0;
+    lastUserAttemptId = Number(baseline.attempt_cursor) || 0;
     hideUserStudent();
     userTimer = setInterval(() => pollUserScreen().catch((err) => {
       $('#userStatus').textContent = err.message;
@@ -126,26 +136,39 @@ async function boot() {
   $('#userApp').classList.add('hidden');
   $('#app').classList.remove('hidden');
   $('#schoolName').textContent = settings.school_name;
-  $('#accountUsername').value = username;
   document.title = settings.school_name + ' - RFID Attendance';
   await refreshLookups();
   showTab(currentTab);
 }
 
 async function pollUserScreen() {
-  const result = await api(`/user/latest?after=${lastUserScanId}`);
+  const result = await api(`/user/latest?after=${lastUserScanId}&attempt_after=${lastUserAttemptId}`);
   $('#userSchoolName').textContent = result.school_name;
+  lastUserScanId = Number(result.scan_cursor) || lastUserScanId;
+  lastUserAttemptId = Number(result.attempt_cursor) || lastUserAttemptId;
   const student = result.latest;
   if (!student) {
     return;
   }
-  lastUserScanId = Number(student.scan_id);
+  if (student.code) {
+    $('#userStudentDetails').classList.add('hidden');
+    $('#userStatus').textContent = student.message;
+    clearTimeout(userHideTimer);
+    userHideTimer = setTimeout(hideUserStudent, 10000);
+    return;
+  }
   $('#userStatus').textContent = 'Student scan detected';
   $('#userStudentDetails').classList.remove('hidden');
   $('#userStudentName').textContent = student.display_name || student.name;
   $('#userLrn').textContent = student.lrn || 'Not recorded';
   $('#userGradeSection').textContent = clsLabel(student);
-  $('#userTapResult').textContent = `${student.type}${student.type === 'IN' && student.status === 'late' ? ' (late)' : ''}`;
+  const eventLabels = {
+    MORNING_IN: 'Morning IN',
+    MORNING_OUT: 'Morning OUT',
+    AFTERNOON_IN: 'Afternoon IN',
+    AFTERNOON_OUT: 'Afternoon OUT',
+  };
+  $('#userTapResult').textContent = `${eventLabels[student.type] || student.type}${student.status === 'late' ? ' (late)' : ''}`;
   $('#userTapTime').textContent = `${student.date} ${student.ts.slice(11, 19)}`;
   clearTimeout(userHideTimer);
   userHideTimer = setTimeout(hideUserStudent, 10000);
@@ -219,7 +242,11 @@ const badge = (cls, text) => `<span class="badge ${esc(cls)}">${esc(text ?? cls)
 
 // ---------- overview ----------
 async function loadOverview() {
-  const [today, feed] = await Promise.all([api('/today'), api('/feed?limit=25')]);
+  const [today, feed, attempts] = await Promise.all([
+    api('/today'),
+    api('/feed?limit=25'),
+    api('/scan-attempts?limit=25'),
+  ]);
   const t = today.total;
   $('#todayLine').textContent =
     today.date + (today.schoolDay ? '' : ' - not a school day (weekend or holiday)');
@@ -248,24 +275,33 @@ async function loadOverview() {
         (f) =>
           `<li><span class="t">${esc(f.ts.slice(5, 10))} ${esc(hhmm(f.ts.slice(11)))}</span>
            <span class="who">${esc(f.name)}<small>${esc(clsLabel(f))}</small></span>
-           ${badge(f.type.toLowerCase(), f.type)}
-           ${f.type === 'IN' && f.status === 'late' ? badge('late', 'late') : ''}</li>`
+           ${badge(f.type.toLowerCase(), f.type.replace('_', ' '))}
+           ${f.status === 'late' ? badge('late', 'late') : ''}</li>`
       )
       .join('') || '<li class="muted">No taps yet.</li>';
+  $('#scanAttemptsTable').innerHTML =
+    '<tr><th>Time</th><th>Student / card</th><th>Result</th></tr>' +
+    (attempts
+      .map((attempt) =>
+        `<tr><td>${esc(attempt.ts.replace('T', ' '))}</td>
+         <td>${esc(attempt.name || 'Unknown card')}${attempt.name ? `<br><small class="muted">${esc(clsLabel(attempt))}</small>` : ''}</td>
+         <td>${esc(attempt.message)}${attempt.expected_type ? `<br><small class="muted">Expected ${esc(attempt.expected_type.replace('_', ' '))}</small>` : ''}</td></tr>`
+      )
+      .join('') || '<tr><td colspan="3" class="muted">No scans need review.</td></tr>');
 }
 
 $('#clearFeed').onclick = async () => {
-  if (!confirm('Permanently delete all live tap feed entries? Attendance records will be kept.')) return;
+  if (!confirm('Permanently delete all live tap and scan-review entries? Attendance records will be kept.')) return;
   const button = $('#clearFeed');
   button.disabled = true;
   $('#feedMsg').textContent = '';
   try {
     await api('/feed', { method: 'DELETE' });
-    $('#feedMsg').textContent = 'All live tap feed entries deleted. Attendance records were kept.';
+    $('#feedMsg').textContent = 'All live taps and scan-review entries deleted. Attendance records were kept.';
     await loadOverview();
   } catch (err) {
     $('#feedMsg').textContent = err.status === 404
-      ? 'This server does not support deleting feed entries yet. Restart the server with npm start, then reload this page.'
+      ? 'This server does not support clearing scan logs yet. Restart the server with npm start, then reload this page.'
       : `Could not clear the feed: ${err.message}`;
   } finally {
     button.disabled = false;
@@ -277,11 +313,14 @@ $('#simBtn').onclick = async () => {
   if (!id) return;
   try {
     const r = await api('/simulate', { method: 'POST', body: { student_id: id } });
+    const eventName = r.type ? r.type.replace('_', ' ') : '';
     $('#simMsg').textContent = r.ok
-      ? `${r.student.name}: ${r.type}${r.type === 'IN' && r.status === 'late' ? ' LATE' : ''} at ${hhmm(r.time)}`
+      ? `${r.student.name}: ${eventName}${r.status === 'late' ? ' LATE' : ''} at ${hhmm(r.time)}`
       : r.code === 'DUPLICATE'
-      ? 'Ignored: repeat tap too soon.'
-      : 'Tap rejected: ' + r.code;
+      ? 'Already recorded'
+      : r.code === 'ALREADY_RECORDED'
+      ? 'Already recorded'
+      : r.message || 'Tap rejected: ' + r.code;
     loadOverview();
   } catch (e) {
     $('#simMsg').textContent = e.message;
@@ -305,15 +344,17 @@ async function loadAttendance() {
   if ($('#attClass').value) q.set('cls', $('#attClass').value);
   const r = await api('/attendance?' + q);
   $('#attTable').innerHTML =
-    '<tr><th>LRN</th><th>Name</th><th>Section</th><th>Time in</th><th>Time out</th><th>Status</th></tr>' +
+    '<tr><th>LRN</th><th>Name</th><th>Section</th><th>Morning in</th><th>Morning out</th><th>Afternoon in</th><th>Afternoon out</th><th>Morning</th><th>Afternoon</th></tr>' +
     (r.rows
       .map(
         (s) =>
           `<tr><td>${esc(s.lrn)}</td><td><button type="button" class="student-attendance-link" data-monthly-attendance="${s.id}">${esc(s.full_name || s.name)}</button></td><td>${esc(clsLabel(s))}</td>
-           <td>${esc(hhmm(s.time_in))}</td><td>${esc(hhmm(s.time_out))}</td>
-           <td>${badge(s.status, !r.schoolDay && s.status === 'absent' ? 'no class' : s.status)}</td></tr>`
+           <td>${esc(hhmm(s.morning_in))}</td><td>${esc(hhmm(s.morning_out))}</td>
+           <td>${esc(hhmm(s.afternoon_in))}</td><td>${esc(hhmm(s.afternoon_out))}</td>
+           <td>${badge(s.morning_status, !r.schoolDay && s.morning_status === 'absent' ? 'no class' : s.morning_status)}</td>
+           <td>${badge(s.afternoon_status, s.afternoon_status)}</td></tr>`
       )
-      .join('') || '<tr><td colspan="6" class="muted">No active students found for this section.</td></tr>');
+      .join('') || '<tr><td colspan="9" class="muted">No active students found for this section.</td></tr>');
   $('#attTable').querySelectorAll('[data-monthly-attendance]').forEach((button) => {
     button.onclick = () => showStudentMonthlyAttendance(Number(button.dataset.monthlyAttendance));
   });
@@ -344,9 +385,14 @@ async function showStudentMonthlyAttendance(studentId) {
       .map(([key, label]) => `<div class="card ${key === 'late' ? 'warn' : key === 'absent' ? 'bad' : 'ok'}"><div class="n">${report.totals[key]}</div><div class="l">${label}</div></div>`)
       .join('');
     $('#studentAttendanceTable').innerHTML =
-      '<tr><th>Date</th><th>Day</th><th>Status</th></tr>' +
+      '<tr><th>Date</th><th>Day</th><th>Morning in</th><th>Morning out</th><th>Afternoon in</th><th>Afternoon out</th><th>Status</th></tr>' +
       report.days
-        .map((day) => `<tr><td>${esc(day.date)}</td><td>${esc(day.weekday)}</td><td>${badge(day.status === 'present' ? 'present' : day.status === 'late' ? 'late' : day.status === 'absent' ? 'absent' : '', day.status)}</td></tr>`)
+        .map((day) =>
+          `<tr><td>${esc(day.date)}</td><td>${esc(day.weekday)}</td>
+           <td>${esc(hhmm(day.morning_in))}</td><td>${esc(hhmm(day.morning_out))}</td>
+           <td>${esc(hhmm(day.afternoon_in))}</td><td>${esc(hhmm(day.afternoon_out))}</td>
+           <td>${badge(day.status === 'present' ? 'present' : day.status === 'late' ? 'late' : day.status === 'absent' ? 'absent' : '', day.status)}</td></tr>`
+        )
         .join('');
   } catch (err) {
     $('#studentAttendanceError').textContent = err.message;
@@ -674,10 +720,64 @@ $('#deleteAllSms').onclick = async () => {
 };
 
 // ---------- settings ----------
+$('#darkModeToggle').checked = document.documentElement.dataset.theme === 'dark';
+$('#darkModeToggle').onchange = () => {
+  const darkModeEnabled = $('#darkModeToggle').checked;
+  setTheme(darkModeEnabled ? 'dark' : 'light');
+  updateThemeControl(darkModeEnabled);
+  $('#themeMsg').textContent = `${darkModeEnabled ? 'Dark' : 'Light'} mode is on. Theme choice is saved in this browser.`;
+};
+
+function updateThemeControl(darkModeEnabled) {
+  $('#darkModeToggle').checked = darkModeEnabled;
+  $('#themeModeLabel').textContent = darkModeEnabled ? 'Dark mode' : 'Light mode';
+  $('#lightModeIcon').classList.toggle('active', !darkModeEnabled);
+  $('#darkModeIcon').classList.toggle('active', darkModeEnabled);
+}
+
+updateThemeControl(document.documentElement.dataset.theme === 'dark');
+
+function closeAccountModal() {
+  $('#accountModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+  $('#openAccountModal').focus();
+}
+
+$('#openAccountModal').onclick = async () => {
+  const message = $('#accountMsg');
+  message.className = 'muted';
+  message.textContent = '';
+  try {
+    const accounts = await api('/accounts');
+    $('#adminUsername').value = accounts.admin_username;
+    $('#userUsername').value = accounts.user_username;
+    $('#currentAdminPassword').value = '';
+    $('#adminNewPassword').value = '';
+    $('#userNewPassword').value = '';
+    $('#accountModal').classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    $('#currentAdminPassword').focus();
+  } catch (err) {
+    message.className = 'err';
+    message.textContent = `Could not load account names: ${err.message}`;
+  }
+};
+
+$('#closeAccountModal').onclick = closeAccountModal;
+$('#accountModal').onclick = (event) => {
+  if (event.target === $('#accountModal')) closeAccountModal();
+};
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('#accountModal').classList.contains('hidden')) closeAccountModal();
+});
+
 async function loadSettings() {
   settings = await api('/settings');
   $('#setName').value = settings.school_name;
-  $('#setLate').value = settings.late_time;
+  $('#morningLateTime').value = settings.morning_late_time;
+  $('#morningEndTime').value = settings.morning_end_time;
+  $('#afternoonLateTime').value = settings.afternoon_late_time;
+  $('#afternoonEndTime').value = settings.afternoon_end_time;
   $('#setDebounce').value = settings.debounce_sec;
   $('#setNotify').checked = settings.notify_enabled === '1';
   const hols = await api('/holidays');
@@ -703,7 +803,10 @@ $('#setForm').onsubmit = async (e) => {
       method: 'PUT',
       body: {
         school_name: $('#setName').value,
-        late_time: $('#setLate').value,
+        morning_late_time: $('#morningLateTime').value,
+        morning_end_time: $('#morningEndTime').value,
+        afternoon_late_time: $('#afternoonLateTime').value,
+        afternoon_end_time: $('#afternoonEndTime').value,
         debounce_sec: $('#setDebounce').value,
         notify_enabled: $('#setNotify').checked ? '1' : '0',
       },
@@ -720,22 +823,26 @@ $('#accountForm').onsubmit = async (e) => {
   const message = $('#accountMsg');
   message.className = 'muted';
   try {
-    const result = await api('/account', {
+    const result = await api('/accounts', {
       method: 'PUT',
       body: {
-        username: $('#accountUsername').value,
-        current_password: $('#accountCurrentPassword').value,
-        new_password: $('#accountNewPassword').value,
+        current_admin_password: $('#currentAdminPassword').value,
+        admin_username: $('#adminUsername').value,
+        admin_new_password: $('#adminNewPassword').value,
+        user_username: $('#userUsername').value,
+        user_new_password: $('#userNewPassword').value,
       },
     });
     token = result.token;
-    username = result.username;
+    username = result.admin_username;
     localStorage.setItem('token', token);
     localStorage.setItem('username', username);
-    $('#accountUsername').value = username;
-    $('#accountCurrentPassword').value = '';
-    $('#accountNewPassword').value = '';
-    message.textContent = 'Admin username and password updated.';
+    $('#adminUsername').value = result.admin_username;
+    $('#userUsername').value = result.user_username;
+    $('#currentAdminPassword').value = '';
+    $('#adminNewPassword').value = '';
+    $('#userNewPassword').value = '';
+    message.textContent = 'Account changes saved.';
   } catch (err) {
     message.className = 'err';
     message.textContent = err.message;
@@ -765,10 +872,12 @@ $('#clearAllData').onclick = async () => {
     settings = await api('/settings');
     $('#schoolName').textContent = settings.school_name;
     $('#setName').value = settings.school_name;
-    $('#setLate').value = settings.late_time;
+    $('#morningLateTime').value = settings.morning_late_time;
+    $('#morningEndTime').value = settings.morning_end_time;
+    $('#afternoonLateTime').value = settings.afternoon_late_time;
+    $('#afternoonEndTime').value = settings.afternoon_end_time;
     $('#setDebounce').value = settings.debounce_sec;
     $('#setNotify').checked = settings.notify_enabled === '1';
-    $('#accountUsername').value = username;
     selectedStudentIds.clear();
     $('#clearAllDataMsg').textContent = `All saved data erased (${total} records). Accounts were reset to configured credentials and settings returned to defaults.`;
     await Promise.all([

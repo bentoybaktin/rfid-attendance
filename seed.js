@@ -26,6 +26,7 @@ async function seedDemo() {
   await ready;
   await db.exec(`
     DELETE FROM scans; DELETE FROM attendance; DELETE FROM students; DELETE FROM unknown_scans;
+    DELETE FROM scan_attempts;
     DELETE FROM notifications; DELETE FROM holidays; DELETE FROM tap_state; DELETE FROM absence_notices;
     DELETE FROM sections;
   `);
@@ -67,7 +68,10 @@ async function seedDemo() {
   }
   const fmt = (mins, secs) =>
     `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-  const insertAttendance = db.prepare('INSERT INTO attendance(student_id,date,time_in,time_out,status) VALUES(?,?,?,?,?)');
+  const insertAttendance = db.prepare(
+    `INSERT INTO attendance(student_id,date,time_in,time_out,status,morning_in,morning_out,afternoon_in,afternoon_out)
+     VALUES(?,?,?,?,?,?,?,?,?)`
+  );
   const insertScan = db.prepare('INSERT INTO scans(student_id,uid,ts,date,type) VALUES(?,?,?,?,?)');
   const pAbsent = (profile, fromEnd) => {
     switch (profile) {
@@ -89,10 +93,24 @@ async function seedDemo() {
         const inMin = late ? 7 * 60 + 31 + Math.floor(rand() * 45) : 6 * 60 + 30 + Math.floor(rand() * 59);
         const outMin = 16 * 60 + Math.floor(rand() * 45);
         const timeIn = fmt(inMin, Math.floor(rand() * 60));
+        const morningOut = '12:00:00';
+        const afternoonIn = '13:00:00';
         const timeOut = fmt(outMin, Math.floor(rand() * 60));
-        await insertAttendance.run(student.id, date, timeIn, timeOut, late ? 'late' : 'present');
-        await insertScan.run(student.id, student.uid, `${date}T${timeIn}`, date, 'IN');
-        await insertScan.run(student.id, student.uid, `${date}T${timeOut}`, date, 'OUT');
+        await insertAttendance.run(
+          student.id,
+          date,
+          timeIn,
+          morningOut,
+          late ? 'late' : 'present',
+          timeIn,
+          morningOut,
+          afternoonIn,
+          timeOut
+        );
+        await insertScan.run(student.id, student.uid, `${date}T${timeIn}`, date, 'MORNING_IN');
+        await insertScan.run(student.id, student.uid, `${date}T${morningOut}`, date, 'MORNING_OUT');
+        await insertScan.run(student.id, student.uid, `${date}T${afternoonIn}`, date, 'AFTERNOON_IN');
+        await insertScan.run(student.id, student.uid, `${date}T${timeOut}`, date, 'AFTERNOON_OUT');
       }
     }
   });

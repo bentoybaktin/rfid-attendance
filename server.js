@@ -149,24 +149,53 @@ const displayStudentName = (student) =>
 
 app.get('/api/user/latest', async (req, res) => {
   const afterId = Number(req.query.after) || 0;
-  const latest = await db.prepare(
-    `SELECT sc.id AS scan_id,s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,
-            s.middle_name,s.name_extension,sc.date,sc.ts,sc.type,
-            CASE
-              WHEN sc.type='IN' AND sc.ts=(a.date || 'T' || a.time_in) THEN a.status
-              ELSE 'present'
-            END AS status
-     FROM scans sc
-     JOIN students s ON s.id=sc.student_id AND s.active=1
-     LEFT JOIN attendance a ON a.student_id=sc.student_id AND a.date=sc.date
-     WHERE sc.id>?
-     ORDER BY sc.id DESC
-     LIMIT 1`
-  ).get(afterId);
-  const formatted = latest
-    ? { ...latest, display_name: displayStudentName(latest), full_name: fullStudentName(latest) }
-    : null;
-  res.json({ school_name: (await allSettings()).school_name, latest: formatted });
+  const attemptAfterId = Number(req.query.attempt_after) || 0;
+  const afternoonLateTime = await getSetting('afternoon_late_time');
+  const [latestScan, latestAttempt, scanCursor, attemptCursor] = await Promise.all([
+    db.prepare(
+      `SELECT sc.id AS scan_id,s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,
+              s.middle_name,s.name_extension,sc.date,sc.ts,sc.type,
+              CASE
+                WHEN sc.type='MORNING_IN' THEN
+                  CASE WHEN sc.ts=(a.date || 'T' || a.morning_in) THEN a.status ELSE 'present' END
+                WHEN sc.type='AFTERNOON_IN' AND ?<>'' AND
+                  CAST(substr(sc.ts,12,5) AS TEXT)>? THEN 'late'
+                ELSE 'present'
+              END AS status,
+              NULL AS code,NULL AS message
+       FROM scans sc
+       JOIN students s ON s.id=sc.student_id AND s.active=1
+       LEFT JOIN attendance a ON a.student_id=sc.student_id AND a.date=sc.date
+       WHERE sc.id>?
+       ORDER BY sc.id DESC
+       LIMIT 1`
+    ).get(afternoonLateTime, afternoonLateTime, afterId),
+    db.prepare(
+      `SELECT a.id AS attempt_id,a.date,a.ts,a.code,a.message,a.expected_type,a.student_id,
+              s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,s.middle_name,s.name_extension
+       FROM scan_attempts a
+       LEFT JOIN students s ON s.id=a.student_id
+       WHERE a.id>?
+       ORDER BY a.id DESC
+       LIMIT 1`
+    ).get(attemptAfterId),
+    db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM scans').get(),
+    db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM scan_attempts').get(),
+  ]);
+  let latest = latestScan;
+  if (latestAttempt && (!latest || latestAttempt.ts >= latest.ts)) {
+    latest = { ...latestAttempt, scan_id: null, type: null };
+  }
+  if (latest && latest.name) {
+    latest.display_name = displayStudentName(latest);
+    latest.full_name = fullStudentName(latest);
+  }
+  res.json({
+    school_name: (await allSettings()).school_name,
+    latest,
+    scan_cursor: Number(scanCursor.id),
+    attempt_cursor: Number(attemptCursor.id),
+  });
 });
 
 app.put('/api/account', async (req, res) => {
@@ -200,6 +229,94 @@ app.put('/api/account', async (req, res) => {
   res.json({ token, username });
 });
 
+app.put('/api/account/user-password', async (req, res) => {
+  const admin = await db.prepare('SELECT id,salt,password_hash FROM auth_users WHERE id=? AND role=?')
+    .get(req.auth.userId, 'admin');
+  if (!admin) return res.status(404).json({ error: 'Admin account not found' });
+
+  const currentPassword = String(req.body.current_password || '');
+  const currentHash = passwordHash(currentPassword, admin.salt);
+  if (!crypto.timingSafeEqual(Buffer.from(currentHash), Buffer.from(admin.password_hash))) {
+    return res.status(400).json({ error: 'Current admin password is incorrect' });
+  }
+
+  const newPassword = String(req.body.new_password || '');
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  const user = await db.prepare('SELECT id FROM auth_users WHERE role=?').get('user');
+  if (!user) return res.status(404).json({ error: 'User account not found' });
+
+  const salt = crypto.randomBytes(16).toString('hex');
+  const password_hash = passwordHash(newPassword, salt);
+  await db.prepare('UPDATE auth_users SET salt=?,password_hash=? WHERE id=?')
+    .run(salt, password_hash, user.id);
+
+  res.json({ ok: true });
+});
+
+app.get('/api/accounts', async (req, res) => {
+  const accounts = await db.prepare('SELECT role,username FROM auth_users WHERE role IN (?,?)')
+    .all('admin', 'user');
+  const usernames = Object.fromEntries(accounts.map((account) => [`${account.role}_username`, account.username]));
+  if (!usernames.admin_username || !usernames.user_username) {
+    return res.status(404).json({ error: 'Admin or user account not found' });
+  }
+  res.json(usernames);
+});
+
+app.put('/api/accounts', async (req, res) => {
+  const admin = await db.prepare('SELECT id,username,salt,password_hash FROM auth_users WHERE id=? AND role=?')
+    .get(req.auth.userId, 'admin');
+  if (!admin) return res.status(404).json({ error: 'Admin account not found' });
+
+  const currentPassword = String(req.body.current_admin_password || '');
+  const currentHash = passwordHash(currentPassword, admin.salt);
+  if (!crypto.timingSafeEqual(Buffer.from(currentHash), Buffer.from(admin.password_hash))) {
+    return res.status(400).json({ error: 'Current admin password is incorrect' });
+  }
+
+  const adminUsername = String(req.body.admin_username || '').trim();
+  const userUsername = String(req.body.user_username || '').trim();
+  const adminNewPassword = String(req.body.admin_new_password || '');
+  const userNewPassword = String(req.body.user_new_password || '');
+  for (const username of [adminUsername, userUsername]) {
+    if (!/^[A-Za-z0-9._-]{3,32}$/.test(username)) {
+      return res.status(400).json({ error: 'Usernames must be 3-32 characters using letters, numbers, dot, underscore or hyphen' });
+    }
+  }
+  if (adminUsername.toLowerCase() === userUsername.toLowerCase()) {
+    return res.status(400).json({ error: 'Admin and user usernames must be different' });
+  }
+  for (const password of [adminNewPassword, userNewPassword]) {
+    if (password && password.length < 8) {
+      return res.status(400).json({ error: 'New passwords must be at least 8 characters' });
+    }
+  }
+
+  const user = await db.prepare('SELECT id,salt,password_hash FROM auth_users WHERE role=?').get('user');
+  if (!user) return res.status(404).json({ error: 'User account not found' });
+
+  const adminSalt = adminNewPassword ? crypto.randomBytes(16).toString('hex') : admin.salt;
+  const adminPasswordHash = adminNewPassword ? passwordHash(adminNewPassword, adminSalt) : admin.password_hash;
+  const userSalt = userNewPassword ? crypto.randomBytes(16).toString('hex') : user.salt;
+  const userPasswordHash = userNewPassword ? passwordHash(userNewPassword, userSalt) : user.password_hash;
+  const temporaryAdminUsername = `tmpadmin_${crypto.randomBytes(12).toString('hex')}`;
+  const temporaryUserUsername = `tmpuser_${crypto.randomBytes(12).toString('hex')}`;
+  await db.transaction(async () => {
+    await db.prepare('UPDATE auth_users SET username=? WHERE id=?').run(temporaryAdminUsername, admin.id);
+    await db.prepare('UPDATE auth_users SET username=? WHERE id=?').run(temporaryUserUsername, user.id);
+    await db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
+      .run(adminUsername, adminSalt, adminPasswordHash, admin.id);
+    await db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
+      .run(userUsername, userSalt, userPasswordHash, user.id);
+  });
+
+  const token = signToken({ id: admin.id, role: 'admin', username: adminUsername, password_hash: adminPasswordHash });
+  res.json({ token, admin_username: adminUsername, user_username: userUsername });
+});
+
 app.delete('/api/data', async (req, res) => {
   if (!usePostgres) await db.pragma('secure_delete = ON');
   const deleted = await db.transaction(async () => {
@@ -208,6 +325,7 @@ app.delete('/api/data', async (req, res) => {
       'students',
       'attendance',
       'scans',
+      'scan_attempts',
       'tap_state',
       'unknown_scans',
       'notifications',
@@ -219,7 +337,7 @@ app.delete('/api/data', async (req, res) => {
     ]) {
       deleted[table] = Number((await db.prepare(`DELETE FROM ${table}`).run()).changes);
     }
-    if (!usePostgres) await db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('students','scans','notifications','auth_users')").run();
+    if (!usePostgres) await db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('students','scans','scan_attempts','notifications','auth_users')").run();
     await initializeAccount('admin', ADMIN_USERNAME, ADMIN_PASSWORD);
     await initializeAccount('user', USER_USERNAME, USER_PASSWORD);
     return deleted;
@@ -245,9 +363,32 @@ app.put('/api/settings', async (req, res) => {
   if (req.body.late_time !== undefined && !isValidTime(req.body.late_time)) {
     return res.status(400).json({ error: 'Late cutoff must be a valid 24-hour time (HH:MM)' });
   }
-  for (const k of Object.keys(DEFAULTS)) {
-    if (req.body[k] !== undefined) await setSetting(k, req.body[k]);
+  const scheduleKeys = [
+    'morning_late_time',
+    'morning_end_time',
+    'afternoon_late_time',
+    'afternoon_end_time',
+  ];
+  if (scheduleKeys.some((key) => req.body[key] !== undefined)) {
+    const current = await allSettings();
+    const schedule = Object.fromEntries(scheduleKeys.map((key) => [key, req.body[key] ?? current[key]]));
+    if (Object.values(schedule).some((time) => !isValidTime(time))) {
+      return res.status(400).json({ error: 'Set all four class times before saving the attendance schedule' });
+    }
+    const orderedTimes = scheduleKeys.map((key) => schedule[key].slice(0, 5));
+    if (!(orderedTimes[0] < orderedTimes[1] &&
+          orderedTimes[1] < orderedTimes[2] &&
+          orderedTimes[2] < orderedTimes[3])) {
+      return res.status(400).json({
+        error: 'Times must be ordered: morning late cutoff, morning finish, afternoon late cutoff, afternoon finish',
+      });
+    }
   }
+  await db.transaction(async () => {
+    for (const k of Object.keys(DEFAULTS)) {
+      if (req.body[k] !== undefined) await setSetting(k, req.body[k]);
+    }
+  });
   res.json(await allSettings());
 });
 app.get('/api/holidays', async (req, res) =>
@@ -403,12 +544,15 @@ app.get('/api/unknown', async (req, res) =>
 // ---------- live data ----------
 app.get('/api/feed', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 25, 100);
+  const afternoonLateTime = await getSetting('afternoon_late_time');
   res.json(
     await db
       .prepare(
         `SELECT sc.id, sc.ts, sc.type, s.name, s.grade, s.section,
                 CASE
-                  WHEN sc.type='IN' AND sc.ts=(a.date || 'T' || a.time_in) THEN a.status
+                  WHEN sc.type='MORNING_IN' AND sc.ts=(a.date || 'T' || a.morning_in) THEN a.status
+                  WHEN sc.type='AFTERNOON_IN' AND ?<>'' AND
+                    CAST(substr(sc.ts,12,5) AS TEXT)>? THEN 'late'
                   ELSE 'present'
                 END AS status
          FROM scans sc
@@ -416,13 +560,26 @@ app.get('/api/feed', async (req, res) => {
          LEFT JOIN attendance a ON a.student_id=sc.student_id AND a.date=sc.date
          ORDER BY sc.ts DESC, sc.id DESC LIMIT ?`
       )
-      .all(limit)
+      .all(afternoonLateTime, afternoonLateTime, limit)
   );
 });
 
+app.get('/api/scan-attempts', async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 25, 100);
+  res.json(await db.prepare(
+    `SELECT a.id,a.ts,a.date,a.code,a.message,a.expected_type,s.name,s.grade,s.section
+     FROM scan_attempts a
+     LEFT JOIN students s ON s.id=a.student_id
+     ORDER BY a.ts DESC,a.id DESC LIMIT ?`
+  ).all(limit));
+});
+
 app.delete('/api/feed', async (req, res) => {
-  const result = await db.prepare('DELETE FROM scans').run();
-  res.json({ ok: true, deleted: Number(result.changes) });
+  const [scans, attempts] = await Promise.all([
+    db.prepare('DELETE FROM scans').run(),
+    db.prepare('DELETE FROM scan_attempts').run(),
+  ]);
+  res.json({ ok: true, deleted: Number(scans.changes) + Number(attempts.changes) });
 });
 
 app.get('/api/today', async (req, res) => {
@@ -433,6 +590,10 @@ app.get('/api/today', async (req, res) => {
   const blank = () => ({ enrolled: 0, present: 0, late: 0, notIn: 0, inCampus: 0 });
   const total = blank();
   const byClass = {};
+  const current = nowManila();
+  const morningEnd = await getSetting('morning_end_time');
+  const afternoonEnd = await getSetting('afternoon_end_time');
+  const afternoonLate = await getSetting('afternoon_late_time');
   for (const s of students) {
     const key = `${s.grade}::${s.section}`;
     const c = (byClass[key] = byClass[key] || { grade: s.grade, section: s.section, ...blank() });
@@ -441,9 +602,14 @@ app.get('/api/today', async (req, res) => {
       t.enrolled++;
       if (!a) t.notIn++;
       else {
-        if (a.status === 'late') t.late++;
+        const late = a.status === 'late' ||
+          (a.afternoon_in && afternoonLate && isAfterTime(a.afternoon_in, afternoonLate));
+        if (late) t.late++;
         else t.present++;
-        if (!a.time_out) t.inCampus++;
+        const inMorning = morningEnd && current.time < morningEnd;
+        const inAfternoon = morningEnd && afternoonEnd && current.time >= morningEnd && current.time < afternoonEnd;
+        if ((inMorning && a.morning_in && !a.morning_out) ||
+            (inAfternoon && a.afternoon_in && !a.afternoon_out)) t.inCampus++;
       }
     }
   }
@@ -467,19 +633,28 @@ app.get('/api/attendance', async (req, res) => {
   const rows = await db
     .prepare(
       `SELECT s.id, s.lrn, s.name, s.surname, s.first_name, s.middle_name, s.name_extension,
-              s.grade, s.section, a.time_in, a.time_out
+              s.grade, s.section, a.time_in, a.time_out,
+              a.morning_in,a.morning_out,a.afternoon_in,a.afternoon_out
        FROM students s
        LEFT JOIN attendance a ON a.student_id=s.id AND a.date=?
        WHERE s.active=1 ${c ? 'AND s.grade=? AND s.section=?' : ''}
        ORDER BY s.grade, s.section, s.name`
     )
     .all(...(c ? [date, c.grade, c.section] : [date]));
-  const lateTime = await getSetting('late_time');
+  const legacyLateTime = await getSetting('late_time');
+  const morningLateTime = await getSetting('morning_late_time') || legacyLateTime;
+  const afternoonLateTime = await getSetting('afternoon_late_time');
   const attendanceRows = rows.map((row) => ({
     ...row,
     display_name: displayStudentName(row),
     full_name: fullStudentName(row),
-    status: row.time_in ? (isAfterTime(row.time_in, lateTime) ? 'late' : 'present') : 'absent',
+    status: row.time_in ? (isAfterTime(row.time_in, morningLateTime) ? 'late' : 'present') : 'absent',
+    morning_status: row.morning_in
+      ? (isAfterTime(row.morning_in, morningLateTime) ? 'late' : 'present')
+      : 'absent',
+    afternoon_status: row.afternoon_in
+      ? (afternoonLateTime && isAfterTime(row.afternoon_in, afternoonLateTime) ? 'late' : 'present')
+      : 'not recorded',
   }));
   res.json({ date, schoolDay: await isSchoolDay(date), rows: attendanceRows });
 });
@@ -501,13 +676,15 @@ app.get('/api/students/:id/attendance', async (req, res) => {
   const monthStart = `${month}-01`;
   const monthEnd = new Date(Date.UTC(year, monthNumber, 0)).toISOString().slice(0, 10);
   const today = nowManila().date;
-  const attendanceRows = await db.prepare('SELECT date,time_in FROM attendance WHERE student_id=? AND date BETWEEN ? AND ?')
+  const attendanceRows = await db.prepare(
+    'SELECT date,time_in,time_out,morning_in,morning_out,afternoon_in,afternoon_out FROM attendance WHERE student_id=? AND date BETWEEN ? AND ?'
+  )
     .all(id, monthStart, monthEnd);
-  const attendance = new Map(attendanceRows.map((row) => [row.date, row.time_in]));
+  const attendance = new Map(attendanceRows.map((row) => [row.date, row]));
   const holidayRows = await db.prepare('SELECT date FROM holidays WHERE date BETWEEN ? AND ?')
     .all(monthStart, monthEnd);
   const holidays = new Set(holidayRows.map((row) => row.date));
-  const cutoff = await getSetting('late_time');
+  const cutoff = await getSetting('morning_late_time') || await getSetting('late_time');
   const totals = { present: 0, late: 0, absent: 0 };
   const days = [];
 
@@ -517,15 +694,21 @@ app.get('/api/students/:id/attendance', async (req, res) => {
     if (!await isSchoolDay(date, holidays)) status = 'no class';
     else if (date > today) status = 'upcoming';
     else {
-      const timeIn = attendance.get(date);
+      const dayAttendance = attendance.get(date);
+      const timeIn = dayAttendance && (dayAttendance.morning_in || dayAttendance.time_in);
       if (!timeIn) status = 'absent';
       else status = isAfterTime(timeIn, cutoff) ? 'late' : 'present';
       totals[status]++;
     }
+    const dayAttendance = attendance.get(date) || {};
     days.push({
       date,
       weekday: new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }),
       status,
+      morning_in: dayAttendance.morning_in || dayAttendance.time_in || null,
+      morning_out: dayAttendance.morning_out || dayAttendance.time_out || null,
+      afternoon_in: dayAttendance.afternoon_in || null,
+      afternoon_out: dayAttendance.afternoon_out || null,
     });
   }
 

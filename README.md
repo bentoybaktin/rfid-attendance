@@ -16,7 +16,7 @@ npm run seed        # demo school: 30 students, ~45 days of history
 npm start           # http://localhost:3000
 ```
 
-Sign in as admin (default username `admin`, password `admin123`) or as user (default username `user`, password `user1234`). Change the default credentials before real use. Admins can add, edit, and remove students and manage settings. Users see only the latest recognized card tap: student name, LRN, grade/section, tap result, and time. On the Overview tab use "Test without hardware" to simulate taps. Open "Early warning" to see the demo students who were seeded with worrying patterns.
+Sign in as admin (default username `admin`, password `admin123`) or as user (default username `user`, password `user1234`). Change the default credentials before real use. Admins can add, edit, and remove students and manage settings. Set the four class times in **Settings** before scanning or using **Test without hardware**. Users see the latest recognized card tap or scan feedback, along with student details when the card is registered. Open "Early warning" to see the demo students who were seeded with worrying patterns.
 
 Run with your own secrets:
 
@@ -50,15 +50,15 @@ Keep Neon credentials and all secrets in Vercel's environment-variable settings,
 1. Remove the demo data by starting from a fresh database (delete `data.db`) instead of running the seed.
 2. In the **Students** tab, add grade/section groups with **+ Add section**, then choose a group in the section filter to view its students. Add students by entering surname, first name, optional middle name and name extension, then selecting an existing grade/section. Names show the middle initial in lists; clicking a student in **Attendance** shows the full middle name in the monthly detail. To register a card: tap it on the reader, then open the Students tab; the unregistered UID shows up as a chip you can click to fill in the form.
 3. Record each parent's mobile number and tick the **consent** box only when the parent has signed a consent form. No consent, no SMS.
-4. In **Settings** set the school name, the late cutoff (default 07:30) and add holidays/suspensions so they aren't counted as absences.
+4. In **Settings** set the school name and configure both class late cutoffs and finish times in chronological order. Add holidays/suspensions so they aren't counted as absences.
 5. Pick an SMS provider (below).
 
 ## Tap rules
 
-- First tap of the day = **IN** (on time, or **late** if after the cutoff).
-- Later taps alternate **OUT / IN**.
-- Repeat taps within 60 seconds (adjustable) are ignored.
-- Unknown cards are remembered so staff can register them.
+- Each student can record four events per school day: morning **IN**, morning **OUT**, afternoon **IN**, and afternoon **OUT**.
+- Morning check-ins after the configured morning late cutoff are marked late; morning check-outs are accepted at or after morning class finishes. Afternoon check-ins follow the same rule using the afternoon cutoff and finish time.
+- Scans must occur in the expected class period and sequence. Wrong-period scans are rejected and listed under **Scans to review**; repeats within the configured debounce window and already-recorded events are ignored.
+- Unknown or inactive cards show **Try again** on the student scan screen and are remembered so staff can register them.
 - No tap on a school day = **absent**. Weekends and listed holidays are skipped.
 
 ## SMS

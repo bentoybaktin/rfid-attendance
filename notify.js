@@ -67,10 +67,13 @@ async function logAndSend(student, kind, date, message) {
 
 function notifyParent(student, type, status, time, date) {
   return getSetting('school_name').then((school) => {
-    const message =
-      type === 'IN'
-        ? `${school}: ${student.name} arrived at ${fmt12(time)}${status === 'late' ? ' (late)' : ''}.`
-        : `${school}: ${student.name} left school at ${fmt12(time)}.`;
+    const messages = {
+      MORNING_IN: `arrived for morning class${status === 'late' ? ' (late)' : ''}`,
+      MORNING_OUT: 'left after morning class',
+      AFTERNOON_IN: `arrived for afternoon class${status === 'late' ? ' (late)' : ''}`,
+      AFTERNOON_OUT: 'left after afternoon class',
+    };
+    const message = `${school}: ${student.name} ${messages[type]} at ${fmt12(time)}.`;
     return logAndSend(student, type, date, message);
   });
 }
