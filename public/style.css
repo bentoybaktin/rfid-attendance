@@ -103,13 +103,14 @@ main {
   z-index: 20;
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: clamp(8px, 3vw, 20px);
   overflow-y: auto;
   background: rgb(7 20 38 / 58%);
 }
 .student-modal-panel {
   width: min(100%, 560px);
   max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   overflow-y: auto;
   margin: auto;
   box-shadow: 0 20px 60px rgb(0 0 0 / 28%);
@@ -252,6 +253,48 @@ td.num, th.num { text-align: right; }
 .student-details dd { margin: 8px 0 0; font-size: clamp(24px, 4vw, 48px); font-weight: 650; }
 .reasons { margin: 0; padding-left: 16px; }
 .reasons li { margin: 0; }
+
+@media (max-width: 600px) {
+  body { overflow-x: hidden; }
+
+  #app > header {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  #app > header h1 { flex: 1 1 calc(100% - 80px); }
+  #tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex: 1 1 100%;
+    width: 100%;
+    gap: 4px;
+  }
+  #tabs button { min-width: 0; padding: 8px 4px; font-size: 13px; }
+  header > button { flex: 0 0 auto; }
+
+  main { padding: 12px; }
+  .panel { min-width: 0; padding: 12px; }
+  .grid2, .grid2.wide-left { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 135px), 1fr)); gap: 8px; }
+  .card { padding: 12px; }
+
+  .row { align-items: stretch; gap: 8px; }
+  .row > label { flex: 1 1 140px; }
+  .row input, .row select { max-width: 100%; }
+  .row > h2 { flex-basis: 100%; }
+  #simStudent { flex: 1 1 180px; min-width: 0; }
+
+  input, select { min-width: 0; font-size: 16px; }
+  button { min-height: 42px; }
+  button.small { min-height: 36px; }
+
+  .feed .t { min-width: 64px; }
+  .student-modal-panel { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+  .student-modal-panel .row > h2 { flex: 1 1 auto; }
+  .user-screen { min-height: calc(100dvh - 100px); padding: 24px 16px; }
+  .user-screen h3 { margin: 20px 0 28px; }
+  .student-details { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
