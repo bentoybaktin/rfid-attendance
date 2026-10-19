@@ -108,6 +108,16 @@ function logout() {
 
 $('#logout').onclick = logout;
 $('#userLogout').onclick = logout;
+$('#userNavToggle').onclick = () => {
+  const open = $('#userApp').classList.toggle('nav-open');
+  $('#userNavToggle').setAttribute('aria-expanded', String(open));
+  $('#userNavToggle').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+};
+$('#userNavBackdrop').onclick = () => {
+  $('#userApp').classList.remove('nav-open');
+  $('#userNavToggle').setAttribute('aria-expanded', 'false');
+  $('#userNavToggle').setAttribute('aria-label', 'Open navigation');
+};
 
 async function boot() {
   if (!token) return showLogin();

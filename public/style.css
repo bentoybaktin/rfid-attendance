@@ -316,11 +316,12 @@ td.num, th.num { text-align: right; }
 
 .login { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
 .login-box { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; margin: 0; }
-.user-app { min-height: 100vh; display: flex; flex-direction: column; }
+.user-app { min-height: 100vh; }
 .user-app > header { width: 100%; }
-.user-app > header > h1 { flex: 1 1 auto; min-width: 180px; }
-.user-app > header > #userAccountName { flex: 0 1 auto; }
-#userAppearance { flex: 0 1 220px; min-width: 190px; }
+.user-app > header h1 { overflow-wrap: anywhere; }
+#userNav { display: flex; flex: 1; flex-direction: column; flex-wrap: wrap; align-items: stretch; gap: 12px; width: 100%; }
+#userNav > #userAccountName { overflow-wrap: anywhere; }
+#userAppearance { width: 100%; }
 #userAppearance .theme-switch { gap: 8px; font-size: 13px; }
 #userAppearance .theme-switch-options { gap: 6px; }
 #userAppearance .theme-mode-icon { width: 16px; height: 16px; }
@@ -328,6 +329,8 @@ td.num, th.num { text-align: right; }
 #userAppearance .theme-switch-track::after { width: 16px; height: 16px; }
 #userAppearance .theme-switch-control input:checked + .theme-switch-track::after { transform: translateX(16px); }
 #userThemeMsg { margin: 4px 0 0; font-size: 11px; }
+#userNav > #userLogout { width: 100%; text-align: left; }
+#userNavToggle, #userNavBackdrop { display: none; }
 .user-app > main {
   flex: 1;
   display: grid;
@@ -372,6 +375,26 @@ td.num, th.num { text-align: right; }
 .schedule-settings input { width: 100%; }
 
 @media (min-width: 861px) {
+  #userApp:not(.hidden) {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    min-height: 100vh;
+  }
+  #userApp > header {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 20px;
+    padding: 24px 16px;
+    border-right: 1px solid var(--line);
+    border-bottom: 0;
+  }
+  #userNav { flex-wrap: nowrap; }
+  #userNav > #userAppearance { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+  #userApp > main { min-width: 0; min-height: 100vh; }
   #app:not(.hidden) {
     display: grid;
     grid-template-columns: 240px minmax(0, 1fr);
@@ -406,6 +429,72 @@ td.num, th.num { text-align: right; }
 
 @media (max-width: 600px) {
   body { overflow-x: hidden; }
+
+  #userApp > header {
+    position: sticky;
+    gap: 8px;
+    padding: 10px 12px;
+    z-index: 10;
+  }
+  #userApp > header h1 { flex: 1 1 auto; min-width: 0; }
+  #userNavToggle {
+    display: flex;
+    position: relative;
+    z-index: 13;
+    flex: 0 0 42px;
+    width: 42px;
+    min-height: 42px;
+    padding: 10px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+  }
+  #userNavToggle span {
+    display: block;
+    width: 19px;
+    height: 2px;
+    border-radius: 2px;
+    background: currentColor;
+    transition: transform 160ms ease, opacity 160ms ease;
+  }
+  #userApp.nav-open #userNavToggle span:first-child { transform: translateY(6px) rotate(45deg); }
+  #userApp.nav-open #userNavToggle span:nth-child(2) { opacity: 0; }
+  #userApp.nav-open #userNavToggle span:last-child { transform: translateY(-6px) rotate(-45deg); }
+  #userApp.nav-open #userNavBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 11;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgb(7 20 38 / 48%);
+  }
+  #userNav {
+    display: flex;
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 12;
+    width: min(82vw, 320px);
+    padding: 76px 16px 20px;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 12px;
+    overflow-y: auto;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    box-shadow: 12px 0 32px rgb(7 20 38 / 18%);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 180ms ease, visibility 180ms ease;
+  }
+  #userApp.nav-open #userNav { transform: translateX(0); visibility: visible; }
+  #userNav > #userAppearance { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+  #userNav > #userLogout { text-align: left; }
 
   #app > header {
     position: sticky;
@@ -505,10 +594,6 @@ td.num, th.num { text-align: right; }
   .user-screen { min-height: calc(100dvh - 100px); padding: 24px 16px; }
   .user-screen h3 { margin: 16px 0 20px; }
   .student-details { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .user-app > header > h1 { min-width: 0; }
-  .user-app > header > #userAccountName { flex: 1 1 100%; order: 1; }
-  #userAppearance { flex: 1 1 auto; min-width: 0; order: 2; }
-  #userLogout { order: 3; }
 }
 
 @media (prefers-reduced-motion: reduce) {

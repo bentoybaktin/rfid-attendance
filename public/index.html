@@ -22,27 +22,33 @@
 <div id="userApp" class="user-app hidden">
   <header>
     <h1 id="userSchoolName">School</h1>
-    <span id="userAccountName" class="muted"></span>
-    <div id="userAppearance">
-      <label class="theme-switch" for="userDarkModeToggle">
-        <span id="userThemeModeLabel">Light mode</span>
-        <span class="theme-switch-options">
-          <svg id="userLightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <circle cx="12" cy="12" r="4"></circle>
-            <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
-          </svg>
-          <span class="theme-switch-control">
-            <input id="userDarkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
-            <span class="theme-switch-track" aria-hidden="true"></span>
+    <button id="userNavToggle" class="ghost" type="button" aria-expanded="false" aria-controls="userNav" aria-label="Open navigation">
+      <span></span><span></span><span></span>
+    </button>
+    <button id="userNavBackdrop" type="button" aria-label="Dismiss navigation"></button>
+    <nav id="userNav">
+      <span id="userAccountName" class="muted"></span>
+      <div id="userAppearance">
+        <label class="theme-switch" for="userDarkModeToggle">
+          <span id="userThemeModeLabel">Light mode</span>
+          <span class="theme-switch-options">
+            <svg id="userLightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+            </svg>
+            <span class="theme-switch-control">
+              <input id="userDarkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
+              <span class="theme-switch-track" aria-hidden="true"></span>
+            </span>
+            <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+            </svg>
           </span>
-          <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
-          </svg>
-        </span>
-      </label>
-      <p id="userThemeMsg" class="muted" role="status">Theme choice is saved in this browser.</p>
-    </div>
-    <button id="userLogout" class="ghost">Log out</button>
+        </label>
+        <p id="userThemeMsg" class="muted" role="status">Theme choice is saved in this browser.</p>
+      </div>
+      <button id="userLogout" class="ghost" type="button">Log out</button>
+    </nav>
   </header>
   <main>
     <section class="panel user-screen">
