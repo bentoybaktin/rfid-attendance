@@ -45,6 +45,10 @@
 <div id="app" class="hidden">
   <header>
     <h1 id="schoolName">School</h1>
+    <button id="navToggle" class="ghost" type="button" aria-expanded="false" aria-controls="tabs" aria-label="Open navigation">
+      <span></span><span></span><span></span>
+    </button>
+    <button id="navBackdrop" type="button" aria-label="Dismiss navigation"></button>
     <nav id="tabs">
       <button data-tab="overview">Overview</button>
       <button data-tab="attendance">Attendance</button>
@@ -52,8 +56,8 @@
       <button data-tab="risk">Early warning</button>
       <button data-tab="notifications">SMS log</button>
       <button data-tab="settings">Settings</button>
+      <button id="logout" class="ghost" type="button">Log out</button>
     </nav>
-    <button id="logout" class="ghost">Log out</button>
   </header>
 
   <main>

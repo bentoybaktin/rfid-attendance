@@ -194,13 +194,26 @@ const loaders = {
 
 function showTab(name) {
   currentTab = name;
+  $('#app').classList.remove('nav-open');
+  $('#navToggle').setAttribute('aria-expanded', 'false');
+  $('#navToggle').setAttribute('aria-label', 'Open navigation');
   clearInterval(timer);
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + name));
-  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   loaders[name]().catch(() => {});
   if (name === 'overview') timer = setInterval(() => loadOverview().catch(() => {}), 3000);
 }
-document.querySelectorAll('#tabs button').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+document.querySelectorAll('#tabs [data-tab]').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+$('#navToggle').onclick = () => {
+  const open = $('#app').classList.toggle('nav-open');
+  $('#navToggle').setAttribute('aria-expanded', String(open));
+  $('#navToggle').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
+};
+$('#navBackdrop').onclick = () => {
+  $('#app').classList.remove('nav-open');
+  $('#navToggle').setAttribute('aria-expanded', 'false');
+  $('#navToggle').setAttribute('aria-label', 'Open navigation');
+};
 
 const badge = (cls, text) => `<span class="badge ${esc(cls)}">${esc(text ?? cls)}</span>`;
 
