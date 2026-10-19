@@ -23,6 +23,25 @@
   <header>
     <h1 id="userSchoolName">School</h1>
     <span id="userAccountName" class="muted"></span>
+    <div id="userAppearance">
+      <label class="theme-switch" for="userDarkModeToggle">
+        <span id="userThemeModeLabel">Light mode</span>
+        <span class="theme-switch-options">
+          <svg id="userLightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+          </svg>
+          <span class="theme-switch-control">
+            <input id="userDarkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
+            <span class="theme-switch-track" aria-hidden="true"></span>
+          </span>
+          <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+          </svg>
+        </span>
+      </label>
+      <p id="userThemeMsg" class="muted" role="status">Theme choice is saved in this browser.</p>
+    </div>
     <button id="userLogout" class="ghost">Log out</button>
   </header>
   <main>
@@ -34,7 +53,7 @@
         <dl class="student-details">
           <div><dt>LRN</dt><dd id="userLrn"></dd></div>
           <div><dt>Grade / section</dt><dd id="userGradeSection"></dd></div>
-          <div><dt>Tap result</dt><dd id="userTapResult"></dd></div>
+          <div id="userTapResultBox"><dt>Tap result</dt><dd id="userTapResult"></dd></div>
           <div><dt>Time</dt><dd id="userTapTime"></dd></div>
         </dl>
       </div>
@@ -263,7 +282,7 @@
         <div class="panel">
           <h2>Subject settings</h2>
           <form id="setForm" class="form">
-            <label>Subject <input id="setName"></label>
+            <label>Class <input id="setName"></label>
             <fieldset class="schedule-settings">
               <legend>Morning class</legend>
               <label>Late after <input id="morningLateTime" type="time" required></label>
@@ -274,7 +293,6 @@
               <label>Late after <input id="afternoonLateTime" type="time" required></label>
               <label>Class finishes <input id="afternoonEndTime" type="time" required></label>
             </fieldset>
-            <p class="muted">Morning and afternoon times must be in order. Each student can record one IN and one OUT for each class period.</p>
             <label>Ignore repeat taps within (seconds) <input id="setDebounce" type="number" min="0"></label>
             <label class="check"><input id="setNotify" type="checkbox"> Send parent SMS on tap</label>
             <button type="submit">Save settings</button>

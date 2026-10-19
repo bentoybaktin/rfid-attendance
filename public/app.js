@@ -8,6 +8,7 @@ function setTheme(theme) {
   const selectedTheme = theme === 'dark' ? 'dark' : 'light';
   document.documentElement.dataset.theme = selectedTheme;
   localStorage.setItem('theme', selectedTheme);
+  updateThemeControl(selectedTheme === 'dark');
 }
 
 setTheme(localStorage.getItem('theme'));
@@ -169,6 +170,8 @@ async function pollUserScreen() {
     AFTERNOON_OUT: 'Afternoon OUT',
   };
   $('#userTapResult').textContent = `${eventLabels[student.type] || student.type}${student.status === 'late' ? ' (late)' : ''}`;
+  $('#userTapResultBox').classList.toggle('event-in', student.type === 'MORNING_IN' || student.type === 'AFTERNOON_IN');
+  $('#userTapResultBox').classList.toggle('event-out', student.type === 'MORNING_OUT' || student.type === 'AFTERNOON_OUT');
   $('#userTapTime').textContent = `${student.date} ${student.ts.slice(11, 19)}`;
   clearTimeout(userHideTimer);
   userHideTimer = setTimeout(hideUserStudent, 10000);
@@ -720,19 +723,27 @@ $('#deleteAllSms').onclick = async () => {
 };
 
 // ---------- settings ----------
-$('#darkModeToggle').checked = document.documentElement.dataset.theme === 'dark';
-$('#darkModeToggle').onchange = () => {
-  const darkModeEnabled = $('#darkModeToggle').checked;
+function changeThemeFromControl(event) {
+  const darkModeEnabled = event.currentTarget.checked;
   setTheme(darkModeEnabled ? 'dark' : 'light');
-  updateThemeControl(darkModeEnabled);
-  $('#themeMsg').textContent = `${darkModeEnabled ? 'Dark' : 'Light'} mode is on. Theme choice is saved in this browser.`;
-};
+}
+
+$('#darkModeToggle').onchange = changeThemeFromControl;
+$('#userDarkModeToggle').onchange = changeThemeFromControl;
 
 function updateThemeControl(darkModeEnabled) {
-  $('#darkModeToggle').checked = darkModeEnabled;
-  $('#themeModeLabel').textContent = darkModeEnabled ? 'Dark mode' : 'Light mode';
-  $('#lightModeIcon').classList.toggle('active', !darkModeEnabled);
-  $('#darkModeIcon').classList.toggle('active', darkModeEnabled);
+  for (const prefix of ['', 'user']) {
+    const toggle = $(`#${prefix ? 'userDarkModeToggle' : 'darkModeToggle'}`);
+    const label = $(`#${prefix ? 'userThemeModeLabel' : 'themeModeLabel'}`);
+    const lightIcon = $(`#${prefix ? 'userLightModeIcon' : 'lightModeIcon'}`);
+    const darkIcon = $(`#${prefix ? 'userDarkModeIcon' : 'darkModeIcon'}`);
+    toggle.checked = darkModeEnabled;
+    label.textContent = darkModeEnabled ? 'Dark mode' : 'Light mode';
+    lightIcon.classList.toggle('active', !darkModeEnabled);
+    darkIcon.classList.toggle('active', darkModeEnabled);
+  }
+  $('#themeMsg').textContent = `${darkModeEnabled ? 'Dark' : 'Light'} mode is on. Theme choice is saved in this browser.`;
+  $('#userThemeMsg').textContent = `${darkModeEnabled ? 'Dark' : 'Light'} mode is on. Theme choice is saved in this browser.`;
 }
 
 updateThemeControl(document.documentElement.dataset.theme === 'dark');
