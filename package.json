@@ -1,0 +1,16 @@
+{
+  "name": "rfid-attendance",
+  "version": "1.0.0",
+  "description": "RFID attendance, parent SMS notifications and early-warning dashboard for Philippine high schools",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "seed": "node seed.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

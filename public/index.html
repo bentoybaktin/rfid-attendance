@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RFID Attendance</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="login" class="login hidden">
+  <form id="loginForm" class="panel login-box">
+    <h1>RFID Attendance</h1>
+    <p class="muted">Sign in to continue</p>
+    <input id="username" placeholder="Username" autocomplete="username" required>
+    <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit">Sign in</button>
+    <p id="loginErr" class="err"></p>
+  </form>
+</div>
+
+<div id="userApp" class="user-app hidden">
+  <header>
+    <h1 id="userSchoolName">School</h1>
+    <span id="userAccountName" class="muted"></span>
+    <button id="userLogout" class="ghost">Log out</button>
+  </header>
+  <main>
+    <section class="panel user-screen">
+      <h2>Student scan</h2>
+      <p id="userStatus" class="muted" role="status">Waiting for an NFC card tap...</p>
+      <div id="userStudentDetails" class="hidden">
+        <h3 id="userStudentName"></h3>
+        <dl class="student-details">
+          <div><dt>LRN</dt><dd id="userLrn"></dd></div>
+          <div><dt>Grade / section</dt><dd id="userGradeSection"></dd></div>
+          <div><dt>Tap result</dt><dd id="userTapResult"></dd></div>
+          <div><dt>Time</dt><dd id="userTapTime"></dd></div>
+        </dl>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="app" class="hidden">
+  <header>
+    <h1 id="schoolName">School</h1>
+    <nav id="tabs">
+      <button data-tab="overview">Overview</button>
+      <button data-tab="attendance">Attendance</button>
+      <button data-tab="students">Students</button>
+      <button data-tab="risk">Early warning</button>
+      <button data-tab="notifications">SMS log</button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+    <button id="logout" class="ghost">Log out</button>
+  </header>
+
+  <main>
+    <!-- Overview -->
+    <section id="tab-overview" class="tab">
+      <p id="todayLine" class="muted"></p>
+      <div class="cards" id="cards"></div>
+      <div class="grid2">
+        <div class="panel">
+          <div class="row">
+            <h2>Live tap feed</h2>
+            <button id="clearFeed" class="small ghost">Delete all feed</button>
+          </div>
+          <ul id="feed" class="feed"></ul>
+          <p id="feedMsg" class="muted" role="status"></p>
+        </div>
+        <div>
+          <div class="panel">
+            <h2>By section</h2>
+            <table id="byClass"></table>
+          </div>
+          <div class="panel">
+            <h2>Test without hardware</h2>
+            <div class="row">
+              <select id="simStudent"></select>
+              <button id="simBtn">Simulate tap</button>
+            </div>
+            <p id="simMsg" class="muted"></p>
+          </div>
+          <div class="panel">
+            <h2>Absence notices</h2>
+            <p class="muted">Texts the parents of students with no tap today (once per student per day). Press this after the late cutoff.</p>
+            <button id="absentBtn">Notify parents of absentees</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Attendance -->
+    <section id="tab-attendance" class="tab hidden">
+      <div class="panel">
+        <div class="row">
+          <label>Date <input type="date" id="attDate"></label>
+          <label>Section <select id="attClass"></select></label>
+          <button id="attExport" class="ghost">Export month as SF2-style CSV</button>
+        </div>
+        <table id="attTable"></table>
+      </div>
+      <div id="studentAttendanceModal" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="studentAttendanceTitle">
+        <div class="panel student-modal-panel monthly-attendance-panel">
+          <div class="row">
+            <h2 id="studentAttendanceTitle">Student monthly attendance</h2>
+            <button type="button" id="closeStudentAttendance" class="ghost" aria-label="Close monthly attendance">Close</button>
+          </div>
+          <p id="studentAttendanceInfo" class="muted"></p>
+          <p id="studentAttendanceFullName" class="muted"></p>
+          <p id="studentAttendanceError" class="err" role="status"></p>
+          <div id="studentAttendanceSummary" class="cards"></div>
+          <table id="studentAttendanceTable"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Students -->
+    <section id="tab-students" class="tab hidden">
+      <div class="student-layout">
+        <div class="panel">
+          <div class="row">
+            <h2>Students</h2>
+            <button id="addStudentBtn" type="button">+ Add student</button>
+            <button id="addSectionBtn" type="button" class="ghost">+ Add section</button>
+          </div>
+          <div class="row">
+            <label>Section
+              <select id="stuClassFilter">
+                <option value="">All sections</option>
+              </select>
+            </label>
+            <button id="toggleStudentMark" type="button" class="ghost">Mark students</button>
+            <div id="studentMarkControls" class="row hidden">
+              <button id="markAllStudents" type="button" class="small ghost">Mark all</button>
+              <button id="unmarkAllStudents" type="button" class="small ghost">Unmark all</button>
+              <span id="stuSelectionCount" class="muted">0 marked</span>
+              <button id="stuRemoveSelected" class="small danger" disabled>Remove marked</button>
+            </div>
+          </div>
+          <p id="stuRemoveMsg" class="muted" role="status"></p>
+          <table id="stuTable"></table>
+        </div>
+      </div>
+      <div id="stuFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+        <div class="panel student-modal-panel">
+          <div class="row">
+            <h2 id="formTitle">Add student</h2>
+            <button type="button" id="sfClose" class="ghost" aria-label="Close student form">Close</button>
+          </div>
+          <form id="stuForm" class="form">
+            <input type="hidden" id="sfId">
+            <label required>LRN <input id="sfLrn" maxlength="12" placeholder="12-digit LRN" required></label>
+            <label required>Surname <input id="sfSurname" maxlength="100" required></label>
+            <label required>First name <input id="sfFirstName" maxlength="100" required></label>
+            <label>Middle name <input id="sfMiddleName" maxlength="100"></label>
+            <label>Name extension (e.g. Jr., III) <input id="sfNameExtension" maxlength="30"></label>
+            <label>Grade and section <select id="sfClass" required></select></label>
+            <label>RFID card UID <input id="sfUid" placeholder="Tap an unregistered card, then click it below"></label>
+            <div id="unknownBox" class="chips"></div>
+            <label required>Parent / guardian <input id="sfParent" required></label>
+            <label required>Parent mobile number <input id="sfPhone" placeholder="09XXXXXXXXX" required></label>
+            <label class="check"><input id="sfConsent" type="checkbox"> Parent gave written consent to receive SMS (Data Privacy Act)</label>
+            <div class="row">
+              <button type="submit">Save</button>
+              <button type="button" id="sfClear" class="ghost">Cancel</button>
+            </div>
+            <p id="sfMsg" class="err"></p>
+          </form>
+        </div>
+      </div>
+      <div id="sectionFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sectionFormTitle">
+        <div class="panel student-modal-panel">
+          <div class="row">
+            <h2 id="sectionFormTitle">Add section</h2>
+            <button type="button" id="closeSectionForm" class="ghost" aria-label="Close section form">Close</button>
+          </div>
+          <form id="sectionForm" class="form">
+            <label>Grade
+              <select id="sectionGrade" required>
+                <option value="">Choose grade</option>
+                <option value="7">Grade 7</option>
+                <option value="8">Grade 8</option>
+                <option value="9">Grade 9</option>
+                <option value="10">Grade 10</option>
+                <option value="11">Grade 11</option>
+                <option value="12">Grade 12</option>
+              </select>
+            </label>
+            <label>Section name <input id="sectionName" maxlength="100" required></label>
+            <p id="sectionMsg" class="err" role="status"></p>
+            <div class="row">
+              <button type="submit">Save section</button>
+              <button type="button" id="cancelSectionForm" class="ghost">Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- Early warning -->
+    <section id="tab-risk" class="tab hidden">
+      <div class="panel">
+        <div class="row">
+          <h2>Early-warning list</h2>
+          <label>Month <input id="riskMonth" type="month"></label>
+          <select id="riskFilter">
+            <option value="flagged">High + Medium</option>
+            <option value="high">High only</option>
+            <option value="all">Everyone</option>
+          </select>
+          <button id="riskExport" class="ghost">Export for counselor (CSV)</button>
+        </div>
+        <p class="muted" id="riskNote"></p>
+        <table id="riskTable"></table>
+      </div>
+    </section>
+
+    <!-- Notifications -->
+    <section id="tab-notifications" class="tab hidden">
+      <div class="panel">
+        <div class="row">
+          <h2>Parent SMS log</h2>
+          <button id="deleteAllSms" class="small ghost">Delete all SMS</button>
+        </div>
+        <p id="smsDeleteMsg" class="muted" role="status"></p>
+        <table id="notifTable"></table>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="tab-settings" class="tab hidden">
+      <div class="grid2">
+        <div class="panel">
+          <h2>School settings</h2>
+          <form id="setForm" class="form">
+            <label>School name <input id="setName"></label>
+            <label>Late after (24-hour) <input id="setLate" type="time" required></label>
+            <label>Ignore repeat taps within (seconds) <input id="setDebounce" type="number" min="0"></label>
+            <label class="check"><input id="setNotify" type="checkbox"> Send parent SMS on tap</label>
+            <button type="submit">Save settings</button>
+            <p id="setMsg" class="muted"></p>
+          </form>
+        </div>
+        <div class="panel">
+          <h2>Holidays / no-class days</h2>
+          <p class="muted">Weekends are skipped automatically. Add holidays and suspensions so they don't count as absences.</p>
+          <form id="holForm" class="row">
+            <input type="date" id="holDate" required>
+            <input id="holName" placeholder="Name (e.g. Class suspension)">
+            <button type="submit">Add</button>
+          </form>
+          <table id="holTable"></table>
+        </div>
+        <div class="panel">
+          <h2>Admin account</h2>
+          <form id="accountForm" class="form">
+            <label>Username <input id="accountUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
+            <label>Current password <input id="accountCurrentPassword" type="password" autocomplete="current-password" required></label>
+            <label>New password <input id="accountNewPassword" type="password" autocomplete="new-password" minlength="8" required></label>
+            <button type="submit">Change username and password</button>
+            <p id="accountMsg" class="muted" role="status"></p>
+          </form>
+        </div>
+        <div class="panel">
+          <h2>Clear all saved data</h2>
+          <p class="muted">Permanently erases all saved students, attendance, taps, SMS logs, unknown cards, holidays, settings, and saved account credentials, including old database pages. The database is compacted and its write-ahead log cleared. Admin/user accounts are recreated from configured environment credentials; settings return to defaults.</p>
+          <button id="clearAllData" class="small danger">Delete all saved data</button>
+          <p id="clearAllDataMsg" class="muted" role="status"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
