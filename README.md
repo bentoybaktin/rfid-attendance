@@ -45,6 +45,15 @@ Vercel runs the Node.js app as a serverless function. Use Neon Postgres for pers
 
 Keep Neon credentials and all secrets in Vercel's environment-variable settings, never in source control. A new Neon database starts empty; data in local `data.db` is not imported automatically. Migrate and verify real records separately before relying on them. Never run the demo seeder against real attendance data.
 
+## API security
+
+- The API requires a signed bearer token for dashboard requests. Tokens expire after 12 hours; changing account credentials invalidates tokens signed with the old password hash.
+- Admins have full access. User accounts are limited to the live scan view, reading section names, and submitting new student registrations; they cannot read the existing student roster or attendance reports.
+- The API is same-origin by default. Set `CORS_ORIGINS` to a comma-separated list of exact trusted HTTP(S) origins only when separate web clients need cross-origin access. Do not use wildcard origins.
+- Security headers include a restrictive Content Security Policy. Client-rendered record values are HTML-escaped, and CSV exports neutralize formula-leading values.
+- API requests are limited to 3,000 per IP per 15 minutes, sign-in requests to 10 per IP per 15 minutes, and RFID device requests to 120 per IP per minute. These limits use in-process memory; deployments with multiple server instances should use a shared rate-limit store at the hosting layer.
+- JSON request bodies are limited to 64 KB. Production deployments must provide `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `USER_USERNAME`, `USER_PASSWORD`, `DEVICE_KEY`, and a stable random `AUTH_SECRET`.
+
 ## Using it for real
 
 1. Remove the demo data by starting from a fresh database (delete `data.db`) instead of running the seed.
@@ -108,7 +117,7 @@ This stores personal data of minors. Before going live:
 - Get written parental consent for the data collected and for SMS (the consent checkbox records the decision; keep the signed forms).
 - Have the school's Data Protection Officer review it, and add the system to your privacy notice.
 - Change `ADMIN_PASSWORD`, `USER_PASSWORD`, and `DEVICE_KEY`. Vercel provides HTTPS for deployed sites.
-- Change the default admin and user credentials before use. Admins can manage students and settings; user accounts are restricted to the live student-tap display.
+- Change the default admin and user credentials before use. Admins can manage students and settings; user accounts can use the live student-tap display and submit new student registrations.
 - Back up the active database regularly and restrict access to the server.
 - Decide how long attendance data is kept and delete it afterwards.
 

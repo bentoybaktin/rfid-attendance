@@ -28,7 +28,7 @@ let cardWatchTimer = null;
 let cardWatchInProgress = false;
 let lastUserScanId = 0;
 let lastUserAttemptId = 0;
-let currentTab = 'overview';
+let currentTab = sessionStorage.getItem('currentTab') || 'overview';
 let userAddMode = false;
 
 // ---------- API ----------
@@ -169,13 +169,13 @@ async function boot() {
     if (err.status === 403) logout();
     return;
   }
-  $('#login').classList.add('hidden');
-  $('#userApp').classList.add('hidden');
-  $('#app').classList.remove('hidden');
   $('#schoolName').textContent = settings.school_name;
   document.title = settings.school_name + ' - RFID Attendance';
   await refreshLookups();
   showTab(currentTab);
+  $('#login').classList.add('hidden');
+  $('#userApp').classList.add('hidden');
+  $('#app').classList.remove('hidden');
 }
 
 async function pollUserScreen() {
@@ -255,7 +255,9 @@ const loaders = {
 };
 
 function showTab(name) {
+  if (!Object.prototype.hasOwnProperty.call(loaders, name)) name = 'overview';
   currentTab = name;
+  sessionStorage.setItem('currentTab', name);
   $('#app').classList.remove('nav-open');
   $('#navToggle').setAttribute('aria-expanded', 'false');
   $('#navToggle').setAttribute('aria-label', 'Open navigation');
@@ -265,7 +267,12 @@ function showTab(name) {
   loaders[name]().catch(() => {});
   if (name === 'overview') timer = setInterval(() => loadOverview().catch(() => {}), 3000);
 }
-document.querySelectorAll('#tabs [data-tab]').forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
+  button.onclick = (event) => {
+    event.preventDefault();
+    showTab(button.dataset.tab);
+  };
+});
 $('#navToggle').onclick = () => {
   const open = $('#app').classList.toggle('nav-open');
   $('#navToggle').setAttribute('aria-expanded', String(open));

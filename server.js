@@ -26,9 +26,9 @@ const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const USER_USERNAME = process.env.USER_USERNAME || 'user';
 const USER_PASSWORD = process.env.USER_PASSWORD || 'user1234';
 
-if (process.env.VERCEL) {
+if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
   for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'USER_USERNAME', 'USER_PASSWORD', 'DEVICE_KEY', 'AUTH_SECRET']) {
-    if (!process.env[name]) throw new Error(`${name} must be configured for Vercel deployments`);
+    if (!process.env[name]) throw new Error(`${name} must be configured for production deployments`);
   }
 }
 if (!process.env.ADMIN_PASSWORD || !process.env.DEVICE_KEY) {
@@ -55,13 +55,126 @@ const appReady = ready.then(async () => {
 });
 
 const app = express();
-app.use(express.json());
+app.disable('x-powered-by');
+if (process.env.VERCEL) {
+  app.set('trust proxy', 1);
+} else if (process.env.TRUST_PROXY_HOPS) {
+  const proxyHops = Number(process.env.TRUST_PROXY_HOPS);
+  if (!Number.isSafeInteger(proxyHops) || proxyHops < 1) {
+    throw new Error('TRUST_PROXY_HOPS must be a positive integer');
+  }
+  app.set('trust proxy', proxyHops);
+}
+
+const allowedOrigins = new Set(
+  String(process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+    .map((origin) => {
+      let parsed;
+      try {
+        parsed = new URL(origin);
+      } catch {
+        throw new Error(`Invalid CORS origin: ${origin}`);
+      }
+      if (parsed.origin !== origin || !['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error(`CORS origins must be exact HTTP(S) origins: ${origin}`);
+      }
+      return parsed.origin;
+    })
+);
+
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': "default-src 'self'; base-uri 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src 'self'; style-src 'self'",
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    'Permissions-Policy': 'camera=(), geolocation=(), microphone=()',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+  });
+  if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
+    res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
+app.use('/api', (req, res, next) => {
+  const origin = req.get('origin');
+  if (origin) {
+    let sameOrigin = false;
+    try {
+      sameOrigin = new URL(origin).origin === new URL(`${req.protocol}://${req.get('host')}`).origin;
+    } catch {
+      sameOrigin = false;
+    }
+    if (!sameOrigin && !allowedOrigins.has(origin)) {
+      return res.status(403).json({ error: 'Origin is not allowed' });
+    }
+    if (!sameOrigin) {
+      res.set('Access-Control-Allow-Origin', origin);
+      res.vary('Origin');
+    }
+  }
+  if (req.method === 'OPTIONS') {
+    const requestedHeaders = String(req.get('access-control-request-headers') || '')
+      .split(',')
+      .map((header) => header.trim().toLowerCase())
+      .filter(Boolean);
+    const allowedHeaders = new Set(['authorization', 'content-type', 'x-device-key']);
+    if (requestedHeaders.some((header) => !allowedHeaders.has(header))) {
+      return res.status(403).json({ error: 'Requested CORS headers are not allowed' });
+    }
+    res.set({
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Device-Key',
+      'Access-Control-Max-Age': '600',
+    });
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+function rateLimit({ windowMs, max, message }) {
+  const requests = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    let entry = requests.get(key);
+    if (!entry || entry.resetAt <= now) {
+      if (requests.size >= 10_000) {
+        for (const [ip, limit] of requests) {
+          if (limit.resetAt <= now) requests.delete(ip);
+        }
+        if (requests.size >= 10_000) {
+          return res.status(503).json({ error: 'Rate limiter is temporarily unavailable' });
+        }
+      }
+      entry = { count: 0, resetAt: now + windowMs };
+      requests.set(key, entry);
+    }
+    entry.count++;
+    res.set('RateLimit-Limit', String(max));
+    res.set('RateLimit-Remaining', String(Math.max(0, max - entry.count)));
+    res.set('RateLimit-Reset', String(Math.ceil(entry.resetAt / 1000)));
+    if (entry.count > max) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((entry.resetAt - now) / 1000))));
+      return res.status(429).json({ error: message });
+    }
+    next();
+  };
+}
+
+app.use('/api', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 3000,
+  message: 'Too many API requests. Try again later.',
+}));
+app.use(express.json({ limit: '64kb' }));
 
 // ---------- auth ----------
 const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
-if (process.env.VERCEL && !process.env.AUTH_SECRET) {
-  throw new Error('AUTH_SECRET must be configured for Vercel deployments');
-}
 const signToken = (account) => {
   const payload = Buffer.from(JSON.stringify({
     userId: account.id,
@@ -87,7 +200,11 @@ function readToken(token) {
     return null;
   }
 }
-app.post('/api/login', async (req, res) => {
+app.post('/api/login', rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Too many sign-in attempts. Try again in 15 minutes.',
+}), async (req, res) => {
   const username = String(req.body.username || '').trim();
   const account = await db.prepare('SELECT id,username,role,salt,password_hash FROM auth_users WHERE lower(username)=lower(?)').get(username);
   const given = passwordHash(String(req.body.password || ''), account ? account.salt : 'invalid-account-salt');
@@ -98,7 +215,11 @@ app.post('/api/login', async (req, res) => {
 });
 
 // RFID readers authenticate with a device key instead of the admin login.
-app.post('/api/tap', async (req, res) => {
+app.post('/api/tap', rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: 'Too many device requests. Try again in one minute.',
+}), async (req, res) => {
   if (req.get('x-device-key') !== DEVICE_KEY) return res.status(401).json({ error: 'bad device key' });
   let when = null;
   const ts = req.body.ts; // optional: readers replaying taps queued while offline
@@ -108,6 +229,12 @@ app.post('/api/tap', async (req, res) => {
   const r = await processTap(req.body.uid, when);
   res.status(r.http || 200).json(r);
 });
+
+const userPermissions = new Set([
+  'GET /user/latest',
+  'GET /classes',
+  'POST /user/students',
+]);
 
 app.use('/api', (req, res, next) => {
   (async () => {
@@ -119,12 +246,8 @@ app.use('/api', (req, res, next) => {
       return res.status(401).json({ error: 'unauthorized' });
     }
     req.auth = auth;
-    const userAllowedRequest = (auth.role === 'user' || auth.role === 'admin') && req.method === 'GET' && req.path === '/user/latest';
-    const userStudentCreateRequest = auth.role === 'user' && (
-      (req.method === 'GET' && req.path === '/classes') ||
-      (req.method === 'POST' && req.path === '/user/students')
-    );
-    if (auth.role !== 'admin' && !userStudentCreateRequest && !userAllowedRequest) {
+    const userAllowedRequest = userPermissions.has(`${req.method} ${req.path}`);
+    if (auth.role !== 'admin' && !(auth.role === 'user' && userAllowedRequest)) {
       return res.status(403).json({ error: 'Admin access required' });
     }
     next();
@@ -134,6 +257,7 @@ app.use('/api', (req, res, next) => {
 // ---------- helpers ----------
 const csvCell = (c) => {
   c = c == null ? '' : String(c);
+  if (/^[\u0000-\u0020]*[=+\-@]/.test(c)) c = `'${c}`;
   return /[",\r\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c;
 };
 const toCsv = (rows) => '\ufeff' + rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
@@ -870,7 +994,11 @@ app.get('/api/export/sf2.csv', async (req, res) => {
 });
 
 // ---------- static dashboard ----------
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  dotfiles: 'deny',
+  index: 'index.html',
+  maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0,
+}));
 
 if (require.main === module) {
   appReady.then(() => {

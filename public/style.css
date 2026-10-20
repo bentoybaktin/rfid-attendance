@@ -450,7 +450,7 @@ td.num, th.num { text-align: right; }
   }
 }
 
-@media (max-width: 600px) {
+@media (max-width: 860px) {
   body { overflow-x: hidden; }
 
   #userApp > header {
