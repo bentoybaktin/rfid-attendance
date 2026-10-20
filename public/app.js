@@ -28,7 +28,11 @@ let cardWatchTimer = null;
 let cardWatchInProgress = false;
 let lastUserScanId = 0;
 let lastUserAttemptId = 0;
-let currentTab = sessionStorage.getItem('currentTab') || 'overview';
+const validTabs = new Set(['overview', 'attendance', 'students', 'risk', 'notifications', 'settings']);
+const urlTab = new URLSearchParams(window.location.search).get('tab');
+let currentTab = validTabs.has(urlTab)
+  ? urlTab
+  : sessionStorage.getItem('currentTab') || 'overview';
 let userAddMode = false;
 
 // ---------- API ----------
@@ -254,10 +258,15 @@ const loaders = {
   settings: loadSettings,
 };
 
-function showTab(name) {
-  if (!Object.prototype.hasOwnProperty.call(loaders, name)) name = 'overview';
+function showTab(name, updateUrl = false) {
+  if (!validTabs.has(name)) name = 'overview';
   currentTab = name;
   sessionStorage.setItem('currentTab', name);
+  if (updateUrl) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', name);
+    window.history.pushState({ tab: name }, '', url);
+  }
   $('#app').classList.remove('nav-open');
   $('#navToggle').setAttribute('aria-expanded', 'false');
   $('#navToggle').setAttribute('aria-label', 'Open navigation');
@@ -270,8 +279,12 @@ function showTab(name) {
 document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
   button.onclick = (event) => {
     event.preventDefault();
-    showTab(button.dataset.tab);
+    showTab(button.dataset.tab, true);
   };
+});
+window.addEventListener('popstate', () => {
+  const name = new URLSearchParams(window.location.search).get('tab');
+  showTab(validTabs.has(name) ? name : 'overview');
 });
 $('#navToggle').onclick = () => {
   const open = $('#app').classList.toggle('nav-open');
