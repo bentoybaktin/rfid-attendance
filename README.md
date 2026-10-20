@@ -51,6 +51,7 @@ Keep Neon credentials and all secrets in Vercel's environment-variable settings,
 - Admins have full access. User accounts are limited to the live scan view, reading section names, and submitting new student registrations; they cannot read the existing student roster or attendance reports.
 - The API is same-origin by default. Set `CORS_ORIGINS` to a comma-separated list of exact trusted HTTP(S) origins only when separate web clients need cross-origin access. Do not use wildcard origins.
 - Security headers include a restrictive Content Security Policy. Client-rendered record values are HTML-escaped, and CSV exports neutralize formula-leading values.
+- The bulk `GET /api/students` roster returns a keyed HMAC-SHA-256 `lrn_hash` instead of plaintext LRN. Only an authenticated admin can request one student's full details for editing. This reduces bulk exposure but does not hide LRNs in other authorized reports or exports, and a hash is not encryption.
 - API requests are limited to 3,000 per IP per 15 minutes, sign-in requests to 10 per IP per 15 minutes, and RFID device requests to 120 per IP per minute. These limits use in-process memory; deployments with multiple server instances should use a shared rate-limit store at the hosting layer.
 - JSON request bodies are limited to 64 KB. Production deployments must provide `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `USER_USERNAME`, `USER_PASSWORD`, `DEVICE_KEY`, and a stable random `AUTH_SECRET`.
 

@@ -499,7 +499,7 @@ async function loadStudents() {
       .map(
         (s) =>
           `<tr>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.id}" ${selectedStudentIds.has(s.id) ? 'checked' : ''}></td>` : ''}
-           <td>${esc(s.display_name || s.name)}<br><small class="muted">${esc(s.lrn)}</small></td>
+           <td>${esc(s.display_name || s.name)}<br><small class="muted">${s.lrn_hash ? 'LRN protected' : 'No LRN'}</small></td>
            <td>${esc(clsLabel(s))}</td>
            <td>${s.rfid_uid ? esc(s.rfid_uid) : '<span class="muted">none</span>'}</td>
            <td>${s.consent && s.parent_phone ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
@@ -515,7 +515,11 @@ async function loadStudents() {
       updateStudentSelection(visibleStudents);
     };
   });
-  $('#stuTable').querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => editStudent(Number(b.dataset.edit))));
+  $('#stuTable').querySelectorAll('[data-edit]').forEach((button) => {
+    button.onclick = () => editStudent(Number(button.dataset.edit)).catch((error) => {
+      $('#stuRemoveMsg').textContent = `Could not open student details: ${error.message}`;
+    });
+  });
   $('#stuTable').querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => removeStudent(Number(b.dataset.del))));
   $('#markAllStudents').onclick = () => {
     for (const student of visibleStudents) selectedStudentIds.add(student.id);
@@ -699,15 +703,17 @@ $('#addStudentBtn').onclick = () => {
   });
 };
 
-function editStudent(id) {
+async function editStudent(id) {
   const s = students.find((x) => x.id === id);
   if (!s) return;
+  const details = await api(`/students/${id}`);
+  if ($('#app').classList.contains('hidden')) return;
   clearInterval(cardWatchTimer);
   cardWatchTimer = null;
   showStudentForm();
   $('#formTitle').textContent = 'Edit student';
   $('#sfId').value = s.id;
-  $('#sfLrn').value = s.lrn || '';
+  $('#sfLrn').value = details.lrn || '';
   $('#sfSurname').value = s.surname || '';
   $('#sfFirstName').value = s.first_name || (s.surname ? '' : s.name);
   $('#sfMiddleName').value = s.middle_name || '';

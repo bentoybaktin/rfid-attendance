@@ -200,6 +200,10 @@ function readToken(token) {
     return null;
   }
 }
+function hashLrn(lrn) {
+  return crypto.createHmac('sha256', AUTH_SECRET).update(`rfid-attendance:lrn:v1:${lrn}`).digest('hex');
+}
+
 app.post('/api/login', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
@@ -563,11 +567,15 @@ app.post('/api/classes', async (req, res) => {
 });
 app.get('/api/students', async (req, res) =>
   res.json((await db.prepare('SELECT * FROM students WHERE active=1 ORDER BY grade, section, surname, first_name, name').all())
-    .map((student) => ({
-      ...student,
-      display_name: displayStudentName(student),
-      full_name: fullStudentName(student),
-    }))
+    .map((student) => {
+      const { lrn, ...publicStudent } = student;
+      return {
+        ...publicStudent,
+        lrn_hash: lrn ? hashLrn(lrn) : null,
+        display_name: displayStudentName(student),
+        full_name: fullStudentName(student),
+      };
+    })
   )
 );
 
@@ -685,6 +693,18 @@ app.delete('/api/students', async (req, res) => {
   });
 
   res.json({ removed });
+});
+
+app.get('/api/students/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid student id' });
+  const student = await db.prepare('SELECT * FROM students WHERE id=? AND active=1').get(id);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+  res.json({
+    ...student,
+    display_name: displayStudentName(student),
+    full_name: fullStudentName(student),
+  });
 });
 
 app.put('/api/students/:id', async (req, res) => {
