@@ -1187,6 +1187,11 @@ app.get('/api/export/sf2.csv', async (req, res) => {
 });
 
 // ---------- static dashboard ----------
+app.get('/students/:id', (req, res, next) => {
+  if (!/^\d+$/.test(req.params.id)) return next();
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.use(express.static(path.join(__dirname, 'public'), {
   dotfiles: 'deny',
   index: 'index.html',

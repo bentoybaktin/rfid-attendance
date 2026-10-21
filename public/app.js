@@ -29,10 +29,16 @@ let cardWatchInProgress = false;
 let lastUserScanId = 0;
 let lastUserAttemptId = 0;
 const validTabs = new Set(['overview', 'attendance', 'students', 'risk', 'notifications', 'settings']);
+const studentRouteMatch = window.location.pathname.match(/^\/students\/(\d+)\/?$/);
+const initialStudentId = studentRouteMatch && Number.isSafeInteger(Number(studentRouteMatch[1])) &&
+  Number(studentRouteMatch[1]) > 0
+  ? Number(studentRouteMatch[1])
+  : null;
 const urlTab = new URLSearchParams(window.location.search).get('tab');
 let currentTab = validTabs.has(urlTab)
   ? urlTab
   : sessionStorage.getItem('currentTab') || 'overview';
+if (studentRouteMatch) currentTab = 'students';
 let recoveryChallenge = '';
 let recoveryQuestionIds = [];
 let userAddMode = false;
@@ -275,6 +281,11 @@ async function boot() {
   $('#login').classList.add('hidden');
   $('#userApp').classList.add('hidden');
   $('#app').classList.remove('hidden');
+  if (initialStudentId) {
+    await showStudentDetails(initialStudentId).catch((error) => {
+      $('#studentDetailsMsg').textContent = error.message;
+    });
+  }
 }
 
 async function pollUserScreen() {
@@ -357,10 +368,11 @@ function showTab(name, updateUrl = false) {
   currentTab = name;
   sessionStorage.setItem('currentTab', name);
   if (updateUrl) {
-    const url = new URL(window.location.href);
+    const url = new URL('/', window.location.origin);
     url.searchParams.set('tab', name);
     window.history.pushState({ tab: name }, '', url);
   }
+  closeStudentDetails(false);
   $('#app').classList.remove('nav-open');
   $('#navToggle').setAttribute('aria-expanded', 'false');
   $('#navToggle').setAttribute('aria-label', 'Open navigation');
@@ -377,6 +389,15 @@ document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
   };
 });
 window.addEventListener('popstate', () => {
+  const studentMatch = window.location.pathname.match(/^\/students\/(\d+)\/?$/);
+  if (studentMatch) {
+    showTab('students');
+    showStudentDetails(Number(studentMatch[1])).catch((error) => {
+      $('#studentDetailsMsg').textContent = error.message;
+    });
+    return;
+  }
+  closeStudentDetails(false);
   const name = new URLSearchParams(window.location.search).get('tab');
   showTab(validTabs.has(name) ? name : 'overview');
 });
@@ -593,7 +614,7 @@ async function loadStudents() {
       .map(
         (s) =>
           `<tr>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.id}" ${selectedStudentIds.has(s.id) ? 'checked' : ''}></td>` : ''}
-           <td>${esc(s.display_name || s.name)}</td>
+           <td><a class="student-attendance-link" data-student-detail="${s.id}" href="/students/${s.id}">${esc(s.display_name || s.name)}</a></td>
            <td>${esc(clsLabel(s))}</td>
            <td>${s.has_rfid_uid ? '<span class="muted">RFID protected</span>' : '<span class="muted">none</span>'}</td>
            <td>${s.has_sms_contact ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
@@ -601,6 +622,14 @@ async function loadStudents() {
                <button class="small ghost" data-del="${s.id}">Remove</button></td></tr>`
       )
       .join('') || `<tr><td colspan="${studentMarkMode ? 6 : 5}" class="muted">No students saved yet.</td></tr>`);
+  $('#stuTable').querySelectorAll('[data-student-detail]').forEach((link) => {
+    link.onclick = (event) => {
+      event.preventDefault();
+      showStudentDetails(Number(link.dataset.studentDetail), true).catch((error) => {
+        $('#studentDetailsMsg').textContent = error.message;
+      });
+    };
+  });
   $('#stuTable').querySelectorAll('[data-select-student]').forEach((checkbox) => {
     checkbox.onchange = () => {
       const id = Number(checkbox.dataset.selectStudent);
@@ -634,6 +663,48 @@ async function loadStudents() {
   $('#studentMarkControls').classList.toggle('hidden', !studentMarkMode);
   loadUnknown();
 }
+
+async function showStudentDetails(id, updateUrl = false) {
+  if (!Number.isSafeInteger(id) || id < 1) throw new Error('Invalid student id');
+  if (updateUrl) {
+    window.history.pushState({ studentId: id }, '', `/students/${id}`);
+  }
+  const student = students.find((item) => item.id === id);
+  $('#studentDetailsTitle').textContent = student?.display_name || student?.name || 'Student details';
+  $('#studentDetailsMsg').textContent = 'Loading student details...';
+  $('#studentDetailsPanel').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  $('#studentDetailsEdit').dataset.studentId = String(id);
+  const details = await api(`/students/${id}`);
+  $('#studentDetailsTitle').textContent = details.display_name || details.name;
+  $('#studentDetailsLrn').textContent = details.lrn || '-';
+  $('#studentDetailsSection').textContent = clsLabel(details);
+  $('#studentDetailsCard').textContent = details.rfid_uid || 'No card assigned';
+  $('#studentDetailsParent').textContent = details.parent_name || '-';
+  $('#studentDetailsPhone').textContent = details.parent_phone || '-';
+  $('#studentDetailsConsent').textContent = details.consent ? 'Yes' : 'No';
+  $('#studentDetailsMsg').textContent = '';
+}
+
+function closeStudentDetails(updateUrl = false) {
+  $('#studentDetailsPanel').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+  if (updateUrl && window.location.pathname.match(/^\/students\/\d+\/?$/)) {
+    window.history.pushState({ tab: 'students' }, '', '/?tab=students');
+  }
+}
+
+$('#studentDetailsClose').onclick = () => closeStudentDetails(true);
+$('#studentDetailsPanel').onclick = (event) => {
+  if (event.target === $('#studentDetailsPanel')) closeStudentDetails(true);
+};
+$('#studentDetailsEdit').onclick = () => {
+  const id = Number($('#studentDetailsEdit').dataset.studentId);
+  closeStudentDetails(false);
+  editStudent(id).catch((error) => {
+    $('#stuRemoveMsg').textContent = `Could not open student details: ${error.message}`;
+  });
+};
 
 function updateStudentSelection(visibleStudents = students) {
   const selectedCount = selectedStudentIds.size;
@@ -842,6 +913,7 @@ $('#stuFormPanel').onclick = (e) => {
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (!$('#sectionFormPanel').classList.contains('hidden')) closeSectionForm();
+  else if (!$('#studentDetailsPanel').classList.contains('hidden')) closeStudentDetails(true);
   else if (!$('#stuFormPanel').classList.contains('hidden')) clearForm();
 });
 

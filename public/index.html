@@ -454,6 +454,25 @@
   </div>
 </div>
 
+<div id="studentDetailsPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="studentDetailsTitle">
+  <section class="panel student-modal-panel">
+    <div class="row">
+      <h2 id="studentDetailsTitle">Student details</h2>
+      <button id="studentDetailsClose" type="button" class="ghost" aria-label="Close student details">Close</button>
+    </div>
+    <dl class="student-details">
+      <div><dt>LRN</dt><dd id="studentDetailsLrn"></dd></div>
+      <div><dt>Grade / section</dt><dd id="studentDetailsSection"></dd></div>
+      <div><dt>RFID card</dt><dd id="studentDetailsCard"></dd></div>
+      <div><dt>Parent / guardian</dt><dd id="studentDetailsParent"></dd></div>
+      <div><dt>Parent mobile</dt><dd id="studentDetailsPhone"></dd></div>
+      <div><dt>SMS consent</dt><dd id="studentDetailsConsent"></dd></div>
+    </dl>
+    <p id="studentDetailsMsg" class="muted" role="status"></p>
+    <button id="studentDetailsEdit" type="button">Edit student</button>
+  </section>
+</div>
+
 <div id="stuFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">
   <div class="panel student-modal-panel">
     <div class="row">

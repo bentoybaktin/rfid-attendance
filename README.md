@@ -18,6 +18,8 @@ npm start           # http://localhost:3000
 
 Sign in as admin (default username `admin`, password `admin123`) or as user (default username `user`, password `user1234`). Change the default credentials before real use. Admins can add, edit, and remove students and manage settings. The user account can add students to sections created by the admin, but cannot view, edit, or remove student records; duplicate names, LRN values, or RFID cards must be resolved by the admin. Users also see the latest recognized card tap or scan feedback, along with student details when the card is registered. Set the four class times in **Settings** before scanning or using **Test without hardware**. Open "Early warning" to see the demo students who were seeded with worrying patterns.
 
+Admins can open a student's shareable detail URL by selecting their name in **Students**. These `/students/<id>` links require an authenticated admin account.
+
 Run with your own secrets:
 
 ```bash
