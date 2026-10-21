@@ -296,7 +296,6 @@ async function pollUserScreen() {
   $('#userStatus').textContent = 'Student scan detected';
   $('#userStudentDetails').classList.remove('hidden');
   $('#userStudentName').textContent = student.display_name || student.name;
-  $('#userLrn').textContent = student.lrn || 'Not recorded';
   $('#userGradeSection').textContent = clsLabel(student);
   const eventLabels = {
     MORNING_IN: 'Morning IN',
@@ -338,7 +337,7 @@ async function refreshLookups() {
     $('#sfClass').value = studentClassValue;
   }
   $('#simStudent').innerHTML = students
-    .filter((s) => s.rfid_uid)
+    .filter((s) => s.has_rfid_uid)
     .map((s) => `<option value="${s.id}">${esc(s.display_name || s.name)} (${esc(clsLabel(s))})</option>`)
     .join('');
 }
@@ -594,10 +593,10 @@ async function loadStudents() {
       .map(
         (s) =>
           `<tr>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.id}" ${selectedStudentIds.has(s.id) ? 'checked' : ''}></td>` : ''}
-           <td>${esc(s.display_name || s.name)}<br><small class="muted">${s.lrn === null ? 'LRN hidden' : 'No LRN'}</small></td>
+           <td>${esc(s.display_name || s.name)}</td>
            <td>${esc(clsLabel(s))}</td>
            <td>${s.has_rfid_uid ? '<span class="muted">RFID protected</span>' : '<span class="muted">none</span>'}</td>
-           <td>${s.consent && s.parent_phone ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
+           <td>${s.has_sms_contact ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
            <td><button class="small ghost" data-edit="${s.id}">Edit</button>
                <button class="small ghost" data-del="${s.id}">Remove</button></td></tr>`
       )
@@ -815,9 +814,9 @@ async function editStudent(id) {
   $('#sfNameExtension').value = s.name_extension || '';
   $('#sfClass').value = `${s.grade}::${s.section}`;
   $('#sfUid').value = details.rfid_uid || '';
-  $('#sfParent').value = s.parent_name || '';
-  $('#sfPhone').value = s.parent_phone || '';
-  $('#sfConsent').checked = !!s.consent;
+  $('#sfParent').value = details.parent_name || '';
+  $('#sfPhone').value = details.parent_phone || '';
+  $('#sfConsent').checked = !!details.consent;
   $('#sfMsg').textContent = '';
 }
 

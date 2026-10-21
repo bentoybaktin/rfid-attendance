@@ -1,4 +1,5 @@
 const express = require('express');
+const { rateLimit } = require('express-rate-limit');
 const path = require('path');
 const crypto = require('crypto');
 const {
@@ -136,39 +137,19 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-function rateLimit({ windowMs, max, message }) {
-  const requests = new Map();
-  return (req, res, next) => {
-    const now = Date.now();
-    const key = req.ip || req.socket.remoteAddress || 'unknown';
-    let entry = requests.get(key);
-    if (!entry || entry.resetAt <= now) {
-      if (requests.size >= 10_000) {
-        for (const [ip, limit] of requests) {
-          if (limit.resetAt <= now) requests.delete(ip);
-        }
-        if (requests.size >= 10_000) {
-          return res.status(503).json({ error: 'Rate limiter is temporarily unavailable' });
-        }
-      }
-      entry = { count: 0, resetAt: now + windowMs };
-      requests.set(key, entry);
-    }
-    entry.count++;
-    res.set('RateLimit-Limit', String(max));
-    res.set('RateLimit-Remaining', String(Math.max(0, max - entry.count)));
-    res.set('RateLimit-Reset', String(Math.ceil(entry.resetAt / 1000)));
-    if (entry.count > max) {
-      res.set('Retry-After', String(Math.max(1, Math.ceil((entry.resetAt - now) / 1000))));
-      return res.status(429).json({ error: message });
-    }
-    next();
-  };
+function createRateLimiter({ windowMs, limit, message }) {
+  return rateLimit({
+    windowMs,
+    limit,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: message },
+  });
 }
 
-app.use('/api', rateLimit({
+app.use('/api', createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 3000,
+  limit: 3000,
   message: 'Too many API requests. Try again later.',
 }));
 app.use(express.json({ limit: '64kb' }));
@@ -237,9 +218,9 @@ function recoveryRateLimit(req, res, next) {
   })().catch(next);
 }
 
-app.post('/api/login', rateLimit({
+app.post('/api/login', createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  limit: 10,
   message: 'Too many sign-in attempts. Try again in 15 minutes.',
 }), async (req, res) => {
   const username = String(req.body.username || '').trim();
@@ -333,9 +314,9 @@ app.post('/api/admin/recovery/reset', recoveryRateLimit, async (req, res) => {
 });
 
 // RFID readers authenticate with a device key instead of the admin login.
-app.post('/api/tap', rateLimit({
+app.post('/api/tap', createRateLimiter({
   windowMs: 60 * 1000,
-  max: 120,
+  limit: 120,
   message: 'Too many device requests. Try again in one minute.',
 }), async (req, res) => {
   if (req.get('x-device-key') !== DEVICE_KEY) return res.status(401).json({ error: 'bad device key' });
@@ -455,7 +436,7 @@ app.get('/api/user/latest', async (req, res) => {
   const afternoonLateTime = await getSetting('afternoon_late_time');
   const [latestScan, latestAttempt, scanCursor, attemptCursor] = await Promise.all([
     db.prepare(
-      `SELECT sc.id AS scan_id,sc.uid,s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,
+      `SELECT sc.id AS scan_id,s.name,s.grade,s.section,s.surname,s.first_name,
               s.middle_name,s.name_extension,sc.date,sc.ts,sc.type,
               CASE
                 WHEN sc.type='MORNING_IN' THEN
@@ -473,8 +454,8 @@ app.get('/api/user/latest', async (req, res) => {
        LIMIT 1`
     ).get(afternoonLateTime, afternoonLateTime, afterId),
     db.prepare(
-      `SELECT a.id AS attempt_id,a.date,a.ts,a.uid,a.code,a.message,a.expected_type,a.student_id,
-              s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,s.middle_name,s.name_extension
+      `SELECT a.id AS attempt_id,a.date,a.ts,a.code,a.message,a.expected_type,
+              s.name,s.grade,s.section,s.surname,s.first_name,s.middle_name,s.name_extension
        FROM scan_attempts a
        LEFT JOIN students s ON s.id=a.student_id
        WHERE a.id>?
@@ -738,14 +719,23 @@ app.post('/api/classes', async (req, res) => {
   }
 });
 app.get('/api/students', async (req, res) =>
-  res.json((await db.prepare('SELECT * FROM students WHERE active=1 ORDER BY grade, section, surname, first_name, name').all())
+  res.json((await db.prepare(
+    `SELECT id,name,surname,first_name,middle_name,name_extension,grade,section,
+            rfid_uid,parent_phone,consent
+     FROM students WHERE active=1 ORDER BY grade,section,surname,first_name,name`
+  ).all())
     .map((student) => {
-      const { lrn: _lrn, rfid_uid: rfidUid, ...publicStudent } = student;
       return {
-        ...publicStudent,
-        lrn: null,
-        rfid_uid: null,
-        has_rfid_uid: Boolean(rfidUid),
+        id: student.id,
+        name: student.name,
+        surname: student.surname,
+        first_name: student.first_name,
+        middle_name: student.middle_name,
+        name_extension: student.name_extension,
+        grade: student.grade,
+        section: student.section,
+        has_rfid_uid: Boolean(student.rfid_uid),
+        has_sms_contact: Boolean(student.consent && student.parent_phone),
         display_name: displayStudentName(student),
         full_name: fullStudentName(student),
       };
@@ -872,7 +862,11 @@ app.delete('/api/students', async (req, res) => {
 app.get('/api/students/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid student id' });
-  const student = await db.prepare('SELECT * FROM students WHERE id=? AND active=1').get(id);
+  const student = await db.prepare(
+    `SELECT id,lrn,name,surname,first_name,middle_name,name_extension,grade,section,
+            rfid_uid,parent_name,parent_phone,consent
+     FROM students WHERE id=? AND active=1`
+  ).get(id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
   res.json({
     ...student,
@@ -1131,7 +1125,12 @@ function requestedRiskMonth(req, res) {
 
 app.get('/api/risk', async (req, res) => {
   const month = requestedRiskMonth(req, res);
-  if (month) res.json(await computeRisk(month));
+  if (!month) return;
+  const report = await computeRisk(month);
+  res.json({
+    ...report,
+    rows: report.rows.map(({ student_id, lrn, parent_name, parent_phone, ...row }) => row),
+  });
 });
 app.get('/api/export/risk.csv', async (req, res) => {
   const month = requestedRiskMonth(req, res);
