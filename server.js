@@ -200,8 +200,41 @@ function readToken(token) {
     return null;
   }
 }
-function hashLrn(lrn) {
-  return crypto.createHmac('sha256', AUTH_SECRET).update(`rfid-attendance:lrn:v1:${lrn}`).digest('hex');
+const recoveryQuestions = {
+  first_school: 'What was the name of your first school?',
+  first_pet: 'What was the name of your first pet?',
+  birth_city: 'In what city were you born?',
+  childhood_nickname: 'What was your childhood nickname?',
+  favorite_teacher: 'What was the name of a favorite teacher?',
+  memorable_place: 'What was the name of a place important to your childhood?',
+};
+const recoveryQuestionIds = new Set(Object.keys(recoveryQuestions));
+const normalizeRecoveryAnswer = (answer) =>
+  String(answer || '').normalize('NFKC').trim().toLocaleLowerCase('en-US');
+function recoveryRateLimit(req, res, next) {
+  (async () => {
+    const now = Date.now();
+    const windowMs = 15 * 60 * 1000;
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const ipHash = crypto.createHmac('sha256', AUTH_SECRET).update(ip).digest('hex');
+    await db.prepare('DELETE FROM recovery_rate_limits WHERE window_start<=?').run(now - 24 * 3600 * 1000);
+    const limit = await db.prepare(
+      `INSERT INTO recovery_rate_limits(ip_hash,window_start,request_count) VALUES(?,?,1)
+       ON CONFLICT(ip_hash) DO UPDATE SET
+         window_start=CASE WHEN recovery_rate_limits.window_start<=? THEN excluded.window_start ELSE recovery_rate_limits.window_start END,
+         request_count=CASE WHEN recovery_rate_limits.window_start<=? THEN 1 ELSE recovery_rate_limits.request_count+1 END
+       RETURNING window_start,request_count`
+    ).get(ipHash, now, now - windowMs, now - windowMs);
+    const resetAt = Number(limit.window_start) + windowMs;
+    res.set('RateLimit-Limit', '5');
+    res.set('RateLimit-Remaining', String(Math.max(0, 5 - Number(limit.request_count))));
+    res.set('RateLimit-Reset', String(Math.ceil(resetAt / 1000)));
+    if (Number(limit.request_count) > 5) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((resetAt - now) / 1000))));
+      return res.status(429).json({ error: 'Too many recovery attempts. Try again in 15 minutes.' });
+    }
+    next();
+  })().catch(next);
 }
 
 app.post('/api/login', rateLimit({
@@ -216,6 +249,87 @@ app.post('/api/login', rateLimit({
   if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
   const token = signToken(account);
   res.json({ token, role: account.role, username: account.username });
+});
+
+app.post('/api/admin/recovery/challenge', recoveryRateLimit, async (req, res) => {
+  const username = String(req.body.username || '').trim();
+  const account = await db.prepare('SELECT id FROM auth_users WHERE lower(username)=lower(?) AND role=?')
+    .get(username, 'admin');
+  const recovery = account && await db.prepare('SELECT question1,question2 FROM admin_recovery WHERE id=1').get();
+  if (!recovery) {
+    return res.status(400).json({
+      error: 'Recovery is unavailable. Check the username or contact your system administrator.',
+    });
+  }
+
+  const challenge = crypto.randomBytes(32).toString('hex');
+  const now = Date.now();
+  await db.prepare('DELETE FROM recovery_challenges WHERE expires_at<=?').run(now);
+  await db.prepare('INSERT INTO recovery_challenges(token_hash,expires_at) VALUES(?,?)')
+    .run(crypto.createHash('sha256').update(challenge).digest('hex'), now + 10 * 60 * 1000);
+  res.json({
+    challenge,
+    questions: [recovery.question1, recovery.question2].map((id) => ({
+      id,
+      question: recoveryQuestions[id],
+    })),
+  });
+});
+
+app.post('/api/admin/recovery/reset', recoveryRateLimit, async (req, res) => {
+  const username = String(req.body.username || '').trim();
+  const challenge = String(req.body.challenge || '');
+  const question1 = String(req.body.question1 || '');
+  const question2 = String(req.body.question2 || '');
+  const answer1 = normalizeRecoveryAnswer(req.body.answer1);
+  const answer2 = normalizeRecoveryAnswer(req.body.answer2);
+  const newPassword = String(req.body.new_password || '');
+  if (!/^[a-f0-9]{64}$/.test(challenge) ||
+      !recoveryQuestionIds.has(question1) ||
+      !recoveryQuestionIds.has(question2) ||
+      question1 === question2 ||
+      answer1.length < 4 || answer1.length > 200 ||
+      answer2.length < 4 || answer2.length > 200 ||
+      newPassword.length < 12 || newPassword.length > 256) {
+    return res.status(400).json({ error: 'Recovery details are invalid or incomplete. Request a new recovery challenge.' });
+  }
+
+  const result = await db.transaction(async () => {
+    const challengeHash = crypto.createHash('sha256').update(challenge).digest('hex');
+    const activeChallenge = await db.prepare(
+      'DELETE FROM recovery_challenges WHERE token_hash=? AND expires_at>? RETURNING expires_at'
+    ).get(challengeHash, Date.now());
+    if (!activeChallenge) {
+      return { error: 'Recovery challenge expired or already used. Request a new one.' };
+    }
+
+    const account = await db.prepare('SELECT id,username,role FROM auth_users WHERE lower(username)=lower(?) AND role=?')
+      .get(username, 'admin');
+    const recovery = await db.prepare('SELECT * FROM admin_recovery WHERE id=1').get();
+    if (!account || !recovery ||
+        recovery.question1 !== question1 || recovery.question2 !== question2) {
+      return { error: 'Recovery answers did not match.' };
+    }
+
+    const given1 = Buffer.from(passwordHash(answer1, recovery.salt1));
+    const expected1 = Buffer.from(recovery.answer_hash1);
+    const given2 = Buffer.from(passwordHash(answer2, recovery.salt2));
+    const expected2 = Buffer.from(recovery.answer_hash2);
+    if (given1.length !== expected1.length || given2.length !== expected2.length ||
+        !crypto.timingSafeEqual(given1, expected1) ||
+        !crypto.timingSafeEqual(given2, expected2)) {
+      return { error: 'Recovery answers did not match.' };
+    }
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    const password_hash = passwordHash(newPassword, salt);
+    await db.prepare('UPDATE auth_users SET salt=?,password_hash=? WHERE id=?')
+      .run(salt, password_hash, account.id);
+    await db.prepare('DELETE FROM recovery_challenges').run();
+    return { ok: true };
+  });
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json({ ok: true });
 });
 
 // RFID readers authenticate with a device key instead of the admin login.
@@ -256,6 +370,61 @@ app.use('/api', (req, res, next) => {
     }
     next();
   })().catch(next);
+});
+
+app.get('/api/admin/recovery', async (req, res) => {
+  const recovery = await db.prepare('SELECT question1,question2 FROM admin_recovery WHERE id=1').get();
+  res.json({
+    configured: Boolean(recovery),
+    questions: recovery
+      ? [recovery.question1, recovery.question2].map((id) => ({
+        id,
+        question: recoveryQuestions[id],
+      }))
+      : [],
+  });
+});
+
+app.put('/api/admin/recovery', async (req, res) => {
+  const admin = await db.prepare('SELECT id,salt,password_hash FROM auth_users WHERE id=? AND role=?')
+    .get(req.auth.userId, 'admin');
+  if (!admin) return res.status(404).json({ error: 'Admin account not found' });
+
+  const currentPassword = String(req.body.current_password || '');
+  const currentHash = Buffer.from(passwordHash(currentPassword, admin.salt));
+  const storedHash = Buffer.from(admin.password_hash);
+  if (currentHash.length !== storedHash.length || !crypto.timingSafeEqual(currentHash, storedHash)) {
+    return res.status(400).json({ error: 'Current admin password is incorrect' });
+  }
+
+  const question1 = String(req.body.question1 || '');
+  const question2 = String(req.body.question2 || '');
+  const answer1 = normalizeRecoveryAnswer(req.body.answer1);
+  const answer2 = normalizeRecoveryAnswer(req.body.answer2);
+  if (!question1 && !question2 && !answer1 && !answer2) {
+    await db.prepare('DELETE FROM admin_recovery WHERE id=1').run();
+    await db.prepare('DELETE FROM recovery_challenges').run();
+    return res.json({ configured: false });
+  }
+  if (!recoveryQuestionIds.has(question1) || !recoveryQuestionIds.has(question2) ||
+      question1 === question2 || answer1.length < 4 || answer1.length > 200 ||
+      answer2.length < 4 || answer2.length > 200) {
+    return res.status(400).json({
+      error: 'Choose two different questions and provide answers between 4 and 200 characters.',
+    });
+  }
+
+  const salt1 = crypto.randomBytes(16).toString('hex');
+  const salt2 = crypto.randomBytes(16).toString('hex');
+  await db.prepare(
+    `INSERT INTO admin_recovery(id,question1,salt1,answer_hash1,question2,salt2,answer_hash2)
+     VALUES(1,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+       question1=excluded.question1,salt1=excluded.salt1,answer_hash1=excluded.answer_hash1,
+       question2=excluded.question2,salt2=excluded.salt2,answer_hash2=excluded.answer_hash2`
+  ).run(question1, salt1, passwordHash(answer1, salt1), question2, salt2, passwordHash(answer2, salt2));
+  await db.prepare('DELETE FROM recovery_challenges').run();
+  res.json({ configured: true });
 });
 
 // ---------- helpers ----------
@@ -466,6 +635,9 @@ app.delete('/api/data', async (req, res) => {
       'holidays',
       'sections',
       'settings',
+      'admin_recovery',
+      'recovery_challenges',
+      'recovery_rate_limits',
       'auth_users',
     ]) {
       deleted[table] = Number((await db.prepare(`DELETE FROM ${table}`).run()).changes);
@@ -568,10 +740,12 @@ app.post('/api/classes', async (req, res) => {
 app.get('/api/students', async (req, res) =>
   res.json((await db.prepare('SELECT * FROM students WHERE active=1 ORDER BY grade, section, surname, first_name, name').all())
     .map((student) => {
-      const { lrn, ...publicStudent } = student;
+      const { lrn: _lrn, rfid_uid: rfidUid, ...publicStudent } = student;
       return {
         ...publicStudent,
-        lrn_hash: lrn ? hashLrn(lrn) : null,
+        lrn: null,
+        rfid_uid: null,
+        has_rfid_uid: Boolean(rfidUid),
         display_name: displayStudentName(student),
         full_name: fullStudentName(student),
       };

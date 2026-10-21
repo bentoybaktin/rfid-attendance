@@ -30,7 +30,35 @@
     </div>
     <button type="submit">Sign in</button>
     <p id="loginErr" class="err"></p>
+    <button id="openForgotPassword" type="button" class="ghost">Forgot admin password?</button>
   </form>
+</div>
+
+<div id="adminRecovery" class="login hidden">
+  <section class="panel login-box" aria-labelledby="recoveryTitle">
+    <h1 id="recoveryTitle">Reset admin password</h1>
+    <p class="muted">Answer the recovery questions configured by the admin.</p>
+    <form id="recoveryLookupForm" class="form">
+      <label>Admin username <input id="recoveryUsername" autocomplete="username" required></label>
+      <button type="submit">Continue</button>
+    </form>
+    <form id="recoveryResetForm" class="form hidden">
+      <p id="recoveryQuestion1" class="muted"></p>
+      <label>Answer
+        <input id="recoveryAnswer1" autocomplete="off" required minlength="4" maxlength="200">
+      </label>
+      <p id="recoveryQuestion2" class="muted"></p>
+      <label>Answer
+        <input id="recoveryAnswer2" autocomplete="off" required minlength="4" maxlength="200">
+      </label>
+      <label>New password (at least 12 characters)
+        <input id="recoveryNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>
+      </label>
+      <button type="submit">Reset password</button>
+    </form>
+    <p id="recoveryMsg" class="err" role="status"></p>
+    <button id="backToLogin" type="button" class="ghost">Back to sign in</button>
+  </section>
 </div>
 
 <div id="userApp" class="user-app hidden">
@@ -304,9 +332,9 @@
           <table id="holTable"></table>
         </div>
         <div class="panel">
-          <h2>Account access</h2>
-          <p class="muted">Update the admin and user sign-in usernames or passwords.</p>
-          <button id="openAccountModal" type="button">Change password</button>
+          <h2>Account</h2>
+          <p class="muted">Manage admin and user sign-in credentials and configure admin password recovery.</p>
+          <button id="openAccountModal" type="button">Manage account</button>
         </div>
         <div class="panel">
           <h2>Clear all saved data</h2>
@@ -320,7 +348,7 @@
   <div id="accountModal" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
     <section class="panel student-modal-panel account-modal-panel">
       <div class="row">
-        <h2 id="accountModalTitle">Change account usernames and passwords</h2>
+        <h2 id="accountModalTitle">Account settings</h2>
         <button id="closeAccountModal" type="button" class="ghost" aria-label="Close account settings">Close</button>
       </div>
       <p class="muted">Enter a new password only if you want to change it. Existing passwords are never displayed.</p>
@@ -386,6 +414,42 @@
         </fieldset>
         <button id="saveAccountCredentials" type="submit">Save account changes</button>
         <p id="accountMsg" class="muted" role="status"></p>
+      </form>
+      <form id="recoverySettingsForm" class="form">
+        <fieldset class="account-credentials">
+          <legend>Admin password recovery</legend>
+          <p class="muted">Set two different questions and answers. Answers are normalized and stored as salted password hashes. Anyone who knows both answers may reset the admin password, so choose answers that are not easy to guess or find.</p>
+          <label>Recovery question 1
+            <select id="recoveryQuestionSelect1" required>
+              <option value="">Choose a question</option>
+              <option value="first_school">What was the name of your first school?</option>
+              <option value="first_pet">What was the name of your first pet?</option>
+              <option value="birth_city">In what city were you born?</option>
+              <option value="childhood_nickname">What was your childhood nickname?</option>
+              <option value="favorite_teacher">What was the name of a favorite teacher?</option>
+              <option value="memorable_place">What was the name of a place important to your childhood?</option>
+            </select>
+          </label>
+          <label>Answer 1 <input id="recoverySettingsAnswer1" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer"></label>
+          <label>Recovery question 2
+            <select id="recoveryQuestionSelect2" required>
+              <option value="">Choose a question</option>
+              <option value="first_school">What was the name of your first school?</option>
+              <option value="first_pet">What was the name of your first pet?</option>
+              <option value="birth_city">In what city were you born?</option>
+              <option value="childhood_nickname">What was your childhood nickname?</option>
+              <option value="favorite_teacher">What was the name of a favorite teacher?</option>
+              <option value="memorable_place">What was the name of a place important to your childhood?</option>
+            </select>
+          </label>
+          <label>Answer 2 <input id="recoverySettingsAnswer2" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer"></label>
+          <label>Confirm with current admin password
+            <input id="recoverySettingsCurrentPassword" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Save recovery questions</button>
+          <button id="clearRecoverySettings" type="button" class="ghost">Remove recovery questions</button>
+          <p id="recoverySettingsMsg" class="muted" role="status"></p>
+        </fieldset>
       </form>
     </section>
   </div>

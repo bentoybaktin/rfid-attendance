@@ -180,6 +180,17 @@ CREATE TABLE IF NOT EXISTS auth_users(
   id SERIAL PRIMARY KEY, username TEXT NOT NULL UNIQUE, role TEXT NOT NULL UNIQUE
     CHECK(role IN ('admin','user')), salt TEXT NOT NULL, password_hash TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS admin_recovery(
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  question1 TEXT NOT NULL, salt1 TEXT NOT NULL, answer_hash1 TEXT NOT NULL,
+  question2 TEXT NOT NULL, salt2 TEXT NOT NULL, answer_hash2 TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recovery_challenges(
+  token_hash TEXT PRIMARY KEY, expires_at BIGINT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS recovery_rate_limits(
+  ip_hash TEXT PRIMARY KEY, window_start BIGINT NOT NULL, request_count INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_scans_student ON scans(student_id, ts);
 CREATE INDEX IF NOT EXISTS idx_att_date ON attendance(date);
 INSERT INTO sections(grade,section) SELECT DISTINCT grade,section FROM students ON CONFLICT DO NOTHING;
@@ -216,6 +227,9 @@ if (usePostgres) {
     CREATE TABLE IF NOT EXISTS sections(grade INTEGER NOT NULL,section TEXT NOT NULL,PRIMARY KEY(grade,section));
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
     CREATE TABLE IF NOT EXISTS auth_users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE COLLATE NOCASE,role TEXT NOT NULL UNIQUE CHECK(role IN ('admin','user')),salt TEXT NOT NULL,password_hash TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS admin_recovery(id INTEGER PRIMARY KEY CHECK(id=1),question1 TEXT NOT NULL,salt1 TEXT NOT NULL,answer_hash1 TEXT NOT NULL,question2 TEXT NOT NULL,salt2 TEXT NOT NULL,answer_hash2 TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS recovery_challenges(token_hash TEXT PRIMARY KEY,expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS recovery_rate_limits(ip_hash TEXT PRIMARY KEY,window_start INTEGER NOT NULL,request_count INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_scans_student ON scans(student_id,ts);
     CREATE INDEX IF NOT EXISTS idx_att_date ON attendance(date);
   `);

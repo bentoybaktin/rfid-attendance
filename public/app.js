@@ -33,6 +33,8 @@ const urlTab = new URLSearchParams(window.location.search).get('tab');
 let currentTab = validTabs.has(urlTab)
   ? urlTab
   : sessionStorage.getItem('currentTab') || 'overview';
+let recoveryChallenge = '';
+let recoveryQuestionIds = [];
 let userAddMode = false;
 
 // ---------- API ----------
@@ -95,9 +97,102 @@ $('#loginForm').onsubmit = async (e) => {
     $('#pw').value = '';
     hidePasswordFields($('#loginForm'));
     $('#loginErr').textContent = '';
+    $('#loginErr').className = 'err';
+    $('#adminRecovery').classList.add('hidden');
     await boot();
   } catch (err) {
+    $('#loginErr').className = 'err';
     $('#loginErr').textContent = err.message;
+  }
+};
+
+$('#openForgotPassword').onclick = () => {
+  recoveryChallenge = '';
+  recoveryQuestionIds = [];
+  $('#recoveryLookupForm').reset();
+  $('#recoveryResetForm').reset();
+  $('#recoveryResetForm').classList.add('hidden');
+  $('#recoveryLookupForm').classList.remove('hidden');
+  $('#recoveryUsername').value = $('#username').value;
+  $('#recoveryMsg').textContent = '';
+  $('#loginForm').classList.add('hidden');
+  $('#adminRecovery').classList.remove('hidden');
+  $('#recoveryUsername').focus();
+};
+
+$('#backToLogin').onclick = () => {
+  recoveryChallenge = '';
+  recoveryQuestionIds = [];
+  $('#adminRecovery').classList.add('hidden');
+  $('#loginForm').classList.remove('hidden');
+  $('#recoveryLookupForm').classList.remove('hidden');
+  $('#recoveryResetForm').classList.add('hidden');
+  $('#recoveryMsg').textContent = '';
+  $('#username').focus();
+};
+
+$('#recoveryLookupForm').onsubmit = async (event) => {
+  event.preventDefault();
+  const button = $('#recoveryLookupForm').querySelector('button[type="submit"]');
+  button.disabled = true;
+  $('#recoveryMsg').className = 'muted';
+  $('#recoveryMsg').textContent = '';
+  try {
+    const response = await fetch('/api/admin/recovery/challenge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: $('#recoveryUsername').value.trim() }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Could not start password recovery');
+    recoveryChallenge = result.challenge;
+    recoveryQuestionIds = result.questions.map((item) => item.id);
+    $('#recoveryQuestion1').textContent = result.questions[0].question;
+    $('#recoveryQuestion2').textContent = result.questions[1].question;
+    $('#recoveryLookupForm').classList.add('hidden');
+    $('#recoveryResetForm').classList.remove('hidden');
+    $('#recoveryMsg').textContent = '';
+    $('#recoveryAnswer1').focus();
+  } catch (error) {
+    $('#recoveryMsg').className = 'err';
+    $('#recoveryMsg').textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$('#recoveryResetForm').onsubmit = async (event) => {
+  event.preventDefault();
+  const button = $('#recoveryResetForm').querySelector('button[type="submit"]');
+  button.disabled = true;
+  $('#recoveryMsg').className = 'muted';
+  $('#recoveryMsg').textContent = '';
+  try {
+    const response = await fetch('/api/admin/recovery/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: $('#recoveryUsername').value.trim(),
+        challenge: recoveryChallenge,
+        question1: recoveryQuestionIds[0],
+        answer1: $('#recoveryAnswer1').value,
+        question2: recoveryQuestionIds[1],
+        answer2: $('#recoveryAnswer2').value,
+        new_password: $('#recoveryNewPassword').value,
+      }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Password reset failed');
+    const recoveredUsername = $('#recoveryUsername').value.trim();
+    $('#backToLogin').click();
+    $('#username').value = recoveredUsername;
+    $('#loginErr').className = 'muted';
+    $('#loginErr').textContent = 'Password reset. Sign in with your new password.';
+  } catch (error) {
+    $('#recoveryMsg').className = 'err';
+    $('#recoveryMsg').textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 };
 
@@ -499,9 +594,9 @@ async function loadStudents() {
       .map(
         (s) =>
           `<tr>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.id}" ${selectedStudentIds.has(s.id) ? 'checked' : ''}></td>` : ''}
-           <td>${esc(s.display_name || s.name)}<br><small class="muted">${s.lrn_hash ? 'LRN protected' : 'No LRN'}</small></td>
+           <td>${esc(s.display_name || s.name)}<br><small class="muted">${s.lrn === null ? 'LRN hidden' : 'No LRN'}</small></td>
            <td>${esc(clsLabel(s))}</td>
-           <td>${s.rfid_uid ? esc(s.rfid_uid) : '<span class="muted">none</span>'}</td>
+           <td>${s.has_rfid_uid ? '<span class="muted">RFID protected</span>' : '<span class="muted">none</span>'}</td>
            <td>${s.consent && s.parent_phone ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
            <td><button class="small ghost" data-edit="${s.id}">Edit</button>
                <button class="small ghost" data-del="${s.id}">Remove</button></td></tr>`
@@ -719,7 +814,7 @@ async function editStudent(id) {
   $('#sfMiddleName').value = s.middle_name || '';
   $('#sfNameExtension').value = s.name_extension || '';
   $('#sfClass').value = `${s.grade}::${s.section}`;
-  $('#sfUid').value = s.rfid_uid || '';
+  $('#sfUid').value = details.rfid_uid || '';
   $('#sfParent').value = s.parent_name || '';
   $('#sfPhone').value = s.parent_phone || '';
   $('#sfConsent').checked = !!s.consent;
@@ -886,6 +981,9 @@ updateThemeControl(document.documentElement.dataset.theme === 'dark');
 
 function closeAccountModal() {
   hidePasswordFields($('#accountModal'));
+  $('#recoverySettingsAnswer1').value = '';
+  $('#recoverySettingsAnswer2').value = '';
+  $('#recoverySettingsCurrentPassword').value = '';
   $('#accountModal').classList.add('hidden');
   document.body.classList.remove('modal-open');
   $('#openAccountModal').focus();
@@ -896,12 +994,24 @@ $('#openAccountModal').onclick = async () => {
   message.className = 'muted';
   message.textContent = '';
   try {
-    const accounts = await api('/accounts');
+    const [accounts, recovery] = await Promise.all([
+      api('/accounts'),
+      api('/admin/recovery'),
+    ]);
     $('#adminUsername').value = accounts.admin_username;
     $('#userUsername').value = accounts.user_username;
     $('#currentAdminPassword').value = '';
     $('#adminNewPassword').value = '';
     $('#userNewPassword').value = '';
+    $('#recoveryQuestionSelect1').value = recovery.questions[0]?.id || '';
+    $('#recoveryQuestionSelect2').value = recovery.questions[1]?.id || '';
+    $('#recoverySettingsAnswer1').value = '';
+    $('#recoverySettingsAnswer2').value = '';
+    $('#recoverySettingsCurrentPassword').value = '';
+    $('#recoverySettingsMsg').className = 'muted';
+    $('#recoverySettingsMsg').textContent = recovery.configured
+      ? 'Recovery questions are configured. Save new answers to replace them.'
+      : 'Recovery questions are not configured. Set them up to enable password recovery.';
     hidePasswordFields($('#accountModal'));
     $('#accountModal').classList.remove('hidden');
     document.body.classList.add('modal-open');
@@ -910,6 +1020,49 @@ $('#openAccountModal').onclick = async () => {
     message.className = 'err';
     message.textContent = `Could not load account names: ${err.message}`;
   }
+};
+
+async function saveRecoverySettings(remove = false) {
+  const button = remove ? $('#clearRecoverySettings') : $('#recoverySettingsForm').querySelector('button[type="submit"]');
+  const message = $('#recoverySettingsMsg');
+  button.disabled = true;
+  message.className = 'muted';
+  message.textContent = '';
+  try {
+    const result = await api('/admin/recovery', {
+      method: 'PUT',
+      body: {
+        current_password: $('#recoverySettingsCurrentPassword').value,
+        question1: remove ? '' : $('#recoveryQuestionSelect1').value,
+        answer1: remove ? '' : $('#recoverySettingsAnswer1').value,
+        question2: remove ? '' : $('#recoveryQuestionSelect2').value,
+        answer2: remove ? '' : $('#recoverySettingsAnswer2').value,
+      },
+    });
+    $('#recoverySettingsAnswer1').value = '';
+    $('#recoverySettingsAnswer2').value = '';
+    $('#recoverySettingsCurrentPassword').value = '';
+    if (remove) {
+      $('#recoveryQuestionSelect1').value = '';
+      $('#recoveryQuestionSelect2').value = '';
+    }
+    message.textContent = result.configured
+      ? 'Password recovery questions saved.'
+      : 'Password recovery questions removed.';
+  } catch (error) {
+    message.className = 'err';
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$('#recoverySettingsForm').onsubmit = async (event) => {
+  event.preventDefault();
+  await saveRecoverySettings();
+};
+$('#clearRecoverySettings').onclick = async () => {
+  await saveRecoverySettings(true);
 };
 
 $('#closeAccountModal').onclick = closeAccountModal;
