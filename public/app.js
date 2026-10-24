@@ -63,15 +63,24 @@ if (studentRouteMatch) currentTab = 'students';
 let recoveryChallenge = '';
 let recoveryQuestionIds = [];
 let userAddMode = false;
+const readOnlyApiCache = new Map();
 
 // ---------- API ----------
 async function api(path, opts = {}) {
+  const method = opts.method || 'GET';
+  const cacheKey = `${token}:${path}`;
+  const cacheablePath = method === 'GET' && ['/settings', '/classes', '/students'].includes(path);
+  const cached = cacheablePath ? readOnlyApiCache.get(cacheKey) : null;
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  if (method !== 'GET') readOnlyApiCache.clear();
+
   const res = await fetch('/api' + path, {
-    method: opts.method || 'GET',
+    method,
     headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (res.status === 401) {
+    readOnlyApiCache.clear();
     showLogin();
     throw new Error('Please sign in again');
   }
@@ -81,6 +90,9 @@ async function api(path, opts = {}) {
     const error = new Error((data && data.error) || `Request failed (HTTP ${res.status})`);
     error.status = res.status;
     throw error;
+  }
+  if (cacheablePath) {
+    readOnlyApiCache.set(cacheKey, { data, expiresAt: Date.now() + 30_000 });
   }
   return data;
 }
@@ -96,8 +108,8 @@ async function download(path, filename) {
 
 // ---------- login / boot ----------
 function showLogin() {
-  clearInterval(timer);
-  clearInterval(userTimer);
+  clearTimeout(timer);
+  clearTimeout(userTimer);
   clearTimeout(userHideTimer);
   $('#app').classList.add('hidden');
   $('#userApp').classList.add('hidden');
@@ -122,6 +134,7 @@ $('#loginForm').onsubmit = async (e) => {
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'Login failed');
+    readOnlyApiCache.clear();
     token = d.token;
     role = d.role;
     username = d.username;
@@ -262,6 +275,7 @@ function hidePasswordFields(container) {
 }
 
 function logout() {
+  readOnlyApiCache.clear();
   localStorage.removeItem('token');
   localStorage.removeItem('role');
   localStorage.removeItem('username');
@@ -274,8 +288,8 @@ function logout() {
   token = '';
   role = '';
   username = '';
-  clearInterval(timer);
-  clearInterval(userTimer);
+  clearTimeout(timer);
+  clearTimeout(userTimer);
   clearTimeout(userHideTimer);
   showLogin();
 }
@@ -309,9 +323,7 @@ async function boot() {
     lastUserScanId = Number(baseline.scan_cursor) || 0;
     lastUserAttemptId = Number(baseline.attempt_cursor) || 0;
     hideUserStudent();
-    userTimer = setInterval(() => pollUserScreen().catch((err) => {
-      $('#userStatus').textContent = err.message;
-    }), 750);
+    scheduleUserPoll();
     return;
   }
   try {
@@ -375,6 +387,18 @@ function hideUserStudent() {
   $('#userStatus').textContent = 'Waiting for an NFC card tap...';
 }
 
+function scheduleUserPoll() {
+  userTimer = setTimeout(async () => {
+    try {
+      await pollUserScreen();
+    } catch (error) {
+      $('#userStatus').textContent = error.message;
+    } finally {
+      if (role === 'user' && !$('#userApp').classList.contains('hidden')) scheduleUserPoll();
+    }
+  }, 2000);
+}
+
 async function refreshLookups() {
   [classes, students] = await Promise.all([api('/classes'), api('/students')]);
   const classOptions = classes
@@ -412,6 +436,20 @@ const loaders = {
 };
 let tabLoadId = 0;
 
+function scheduleOverviewRefresh() {
+  timer = setTimeout(async () => {
+    if (currentTab !== 'overview') return;
+    try {
+      await loadOverview();
+      clearLoadError();
+    } catch (error) {
+      showLoadError(error);
+    } finally {
+      if (currentTab === 'overview') scheduleOverviewRefresh();
+    }
+  }, 15000);
+}
+
 function showTab(name, updateUrl = false) {
   if (!validTabs.has(name)) name = 'overview';
   currentTab = name;
@@ -425,7 +463,7 @@ function showTab(name, updateUrl = false) {
   $('#app').classList.remove('nav-open');
   $('#navToggle').setAttribute('aria-expanded', 'false');
   $('#navToggle').setAttribute('aria-label', 'Open navigation');
-  clearInterval(timer);
+  clearTimeout(timer);
   clearLoadError();
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + name));
   document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -443,10 +481,8 @@ function showTab(name, updateUrl = false) {
     if (loadId !== tabLoadId) return;
     $('#tabLoading').classList.add('hidden');
     $('#app > main').setAttribute('aria-busy', 'false');
+    if (name === 'overview') scheduleOverviewRefresh();
   });
-  if (name === 'overview') {
-    timer = setInterval(() => loadOverview().then(clearLoadError).catch(showLoadError), 5000);
-  }
 }
 document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
   button.onclick = (event) => {

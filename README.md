@@ -24,6 +24,8 @@ For compatibility with PHP-style links, `/index.php?url=%2Fadmin%2Fdashboard` re
 
 When an admin selects a dashboard tab, a loading screen stays visible until that tab's data has loaded, then the completed tab is shown. This makes the transition clearer but does not replace server/database performance improvements.
 
+Dashboard overview refreshes every 15 seconds, and the user scan screen polls every 2 seconds without overlapping requests. Settings, section lists, and the admin student roster are cached in the current page's memory for up to 30 seconds and cleared after writes. These authenticated endpoints are intentionally not shared through a public CDN cache: doing so could expose admin-only student data or serve it across accounts.
+
 Run with your own secrets:
 
 ```bash
