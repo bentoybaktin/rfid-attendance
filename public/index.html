@@ -28,6 +28,10 @@
         </svg>
       </button>
     </div>
+    <label class="login-remember" for="rememberMe">
+      <input id="rememberMe" type="checkbox">
+      <span>Remember me</span>
+    </label>
     <button type="submit">Sign in</button>
     <p id="loginErr" class="err"></p>
     <button id="openForgotPassword" type="button" class="ghost">Forgot admin password?</button>
@@ -121,7 +125,7 @@
       <button data-tab="attendance">Attendance</button>
       <button data-tab="students">Students</button>
       <button data-tab="risk">Early warning</button>
-      <button data-tab="notifications">SMS log</button>
+      <button data-tab="notifications">Notifications</button>
       <button data-tab="settings">Settings</button>
       <div id="navAppearance">
         <label class="theme-switch" for="darkModeToggle">
@@ -147,6 +151,7 @@
   </header>
 
   <main>
+    <p id="loadError" class="err hidden" role="alert"></p>
     <!-- Overview -->
     <section id="tab-overview" class="tab">
       <p id="todayLine" class="muted"></p>
@@ -179,7 +184,7 @@
           </div>
           <div class="panel">
             <h2>Absence notices</h2>
-            <p class="muted">Texts the parents of students with no tap today (once per student per day). Press this after the late cutoff.</p>
+            <p class="muted">Notifies opted-in parents of students with no tap today (once per student per day). Press this after the late cutoff.</p>
             <button id="absentBtn">Notify parents of absentees</button>
           </div>
         </div>
@@ -289,8 +294,8 @@
     <section id="tab-notifications" class="tab hidden">
       <div class="panel">
         <div class="row">
-          <h2>Parent SMS log</h2>
-          <button id="deleteAllSms" class="small ghost">Delete all SMS</button>
+          <h2>Parent notification log</h2>
+          <button id="deleteAllSms" class="small ghost">Delete all notifications</button>
         </div>
         <p id="smsDeleteMsg" class="muted" role="status"></p>
         <table id="notifTable"></table>
@@ -316,6 +321,8 @@
             </fieldset>
             <label>Ignore repeat taps within (seconds) <input id="setDebounce" type="number" min="0"></label>
             <label class="check"><input id="setNotify" type="checkbox"> Send parent SMS on tap</label>
+            <label class="check"><input id="setEmailNotify" type="checkbox"> Send parent email on tap</label>
+            <p class="muted">Each channel sends only to parents with a contact address and recorded consent. Email requires Resend configuration on the server.</p>
             <button type="submit">Save settings</button>
             <p id="setMsg" class="muted"></p>
           </form>
@@ -337,7 +344,7 @@
         </div>
         <div class="panel">
           <h2>Clear all saved data</h2>
-          <p class="muted">Permanently erases all saved students, attendance, taps, SMS logs, unknown cards, holidays, settings, and saved account credentials, including old database pages. The database is compacted and its write-ahead log cleared. Admin/user accounts are recreated from configured environment credentials; settings return to defaults.</p>
+          <p class="muted">Permanently erases all saved students, attendance, taps, notification logs, unknown cards, holidays, settings, and saved account credentials, including old database pages. The database is compacted and its write-ahead log cleared. Admin/user accounts are recreated from configured environment credentials; settings return to defaults.</p>
           <button id="clearAllData" class="small danger">Delete all saved data</button>
           <p id="clearAllDataMsg" class="muted" role="status"></p>
         </div>
@@ -467,6 +474,8 @@
       <div><dt>Parent / guardian</dt><dd id="studentDetailsParent"></dd></div>
       <div><dt>Parent mobile</dt><dd id="studentDetailsPhone"></dd></div>
       <div><dt>SMS consent</dt><dd id="studentDetailsConsent"></dd></div>
+      <div><dt>Parent email</dt><dd id="studentDetailsEmail"></dd></div>
+      <div><dt>Email consent</dt><dd id="studentDetailsEmailConsent"></dd></div>
     </dl>
     <p id="studentDetailsMsg" class="muted" role="status"></p>
     <button id="studentDetailsEdit" type="button">Edit student</button>
@@ -491,8 +500,10 @@
       <label>RFID card UID (scan card to fill automatically) <input id="sfUid" placeholder="Scan the card at the reader"></label>
       <div id="unknownBox" class="chips"></div>
       <label required>Parent / guardian <input id="sfParent" required></label>
-      <label required>Parent mobile number <input id="sfPhone" placeholder="09XXXXXXXXX" required></label>
+      <label>Parent mobile number <input id="sfPhone" placeholder="09XXXXXXXXX"></label>
       <label class="check"><input id="sfConsent" type="checkbox"> Parent gave written consent to receive SMS (Data Privacy Act)</label>
+      <label>Parent email address <input id="sfEmail" type="email" maxlength="254" autocomplete="email"></label>
+      <label class="check"><input id="sfEmailConsent" type="checkbox"> Parent gave consent to receive attendance emails</label>
       <div class="row">
         <button type="submit">Save</button>
         <button type="button" id="sfClear" class="ghost">Cancel</button>

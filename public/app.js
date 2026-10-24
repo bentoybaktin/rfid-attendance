@@ -1,4 +1,12 @@
 const $ = (s) => document.querySelector(s);
+function clearLoadError() {
+  $('#loadError').textContent = '';
+  $('#loadError').classList.add('hidden');
+}
+function showLoadError(error) {
+  $('#loadError').textContent = error instanceof Error ? error.message : 'Could not load data';
+  $('#loadError').classList.remove('hidden');
+}
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clsLabel = (c) => `Grade ${c.grade} - ${c.section}`;
@@ -13,9 +21,18 @@ function setTheme(theme) {
 
 setTheme(localStorage.getItem('theme'));
 
-let token = localStorage.getItem('token') || '';
-let role = localStorage.getItem('role') || '';
-let username = localStorage.getItem('username') || '';
+let rememberMe = localStorage.getItem('rememberMe') === 'true';
+if (!rememberMe) {
+  localStorage.removeItem('token');
+  localStorage.removeItem('role');
+  localStorage.removeItem('username');
+}
+const authStorage = () => rememberMe ? localStorage : sessionStorage;
+const otherAuthStorage = () => rememberMe ? sessionStorage : localStorage;
+let token = authStorage().getItem('token') || '';
+let role = authStorage().getItem('role') || '';
+let username = authStorage().getItem('username') || '';
+$('#rememberMe').checked = rememberMe;
 let settings = {};
 let classes = [];
 let students = [];
@@ -89,16 +106,28 @@ $('#loginForm').onsubmit = async (e) => {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: $('#username').value, password: $('#pw').value }),
+      body: JSON.stringify({
+        username: $('#username').value,
+        password: $('#pw').value,
+        remember_me: $('#rememberMe').checked,
+      }),
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || 'Login failed');
     token = d.token;
     role = d.role;
     username = d.username;
-    localStorage.setItem('token', token);
-    localStorage.setItem('role', role);
-    localStorage.setItem('username', username);
+    rememberMe = $('#rememberMe').checked;
+    const storage = authStorage();
+    const otherStorage = otherAuthStorage();
+    storage.setItem('token', token);
+    storage.setItem('role', role);
+    storage.setItem('username', username);
+    otherStorage.removeItem('token');
+    otherStorage.removeItem('role');
+    otherStorage.removeItem('username');
+    if (rememberMe) localStorage.setItem('rememberMe', 'true');
+    else localStorage.removeItem('rememberMe');
     $('#username').value = '';
     $('#pw').value = '';
     hidePasswordFields($('#loginForm'));
@@ -225,6 +254,12 @@ function logout() {
   localStorage.removeItem('token');
   localStorage.removeItem('role');
   localStorage.removeItem('username');
+  localStorage.removeItem('rememberMe');
+  sessionStorage.removeItem('token');
+  sessionStorage.removeItem('role');
+  sessionStorage.removeItem('username');
+  $('#rememberMe').checked = false;
+  rememberMe = false;
   token = '';
   role = '';
   username = '';
@@ -377,10 +412,13 @@ function showTab(name, updateUrl = false) {
   $('#navToggle').setAttribute('aria-expanded', 'false');
   $('#navToggle').setAttribute('aria-label', 'Open navigation');
   clearInterval(timer);
+  clearLoadError();
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + name));
   document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
-  loaders[name]().catch(() => {});
-  if (name === 'overview') timer = setInterval(() => loadOverview().catch(() => {}), 3000);
+  loaders[name]().then(clearLoadError).catch(showLoadError);
+  if (name === 'overview') {
+    timer = setInterval(() => loadOverview().then(clearLoadError).catch(showLoadError), 3000);
+  }
 }
 document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
   button.onclick = (event) => {
@@ -503,10 +541,10 @@ $('#simBtn').onclick = async () => {
 };
 
 $('#absentBtn').onclick = async () => {
-  if (!confirm('Send an absence SMS to the parents of every student with no tap today?')) return;
+  if (!confirm('Send configured absence notifications to opted-in parents of students with no tap today?')) return;
   try {
     const r = await api('/notify-absent', { method: 'POST' });
-    alert(`${r.checked} absent student(s) checked, ${r.sent} SMS sent (only parents with consent are texted).`);
+    alert(`${r.checked} absent student(s) checked, ${r.sent} notification(s) sent to opted-in parents.`);
   } catch (e) {
     alert(e.message);
   }
@@ -590,8 +628,8 @@ document.addEventListener('keydown', (event) => {
     closeStudentMonthlyAttendance();
   }
 });
-$('#attDate').onchange = () => loadAttendance().catch(() => {});
-$('#attClass').onchange = () => loadAttendance().catch(() => {});
+$('#attDate').onchange = () => loadAttendance().then(clearLoadError).catch(showLoadError);
+$('#attClass').onchange = () => loadAttendance().then(clearLoadError).catch(showLoadError);
 $('#attExport').onclick = () => {
   const month = ($('#attDate').value || '').slice(0, 7);
   const q = new URLSearchParams({ month });
@@ -609,7 +647,7 @@ async function loadStudents() {
     ? students.filter((s) => `${s.grade}::${s.section}` === classFilter)
     : students;
   $('#stuTable').innerHTML =
-    `<tr>${studentMarkMode ? '<th></th>' : ''}<th>Name</th><th>Section</th><th>Card</th><th>Parent SMS</th><th></th></tr>` +
+    `<tr>${studentMarkMode ? '<th></th>' : ''}<th>Name</th><th>Section</th><th>Card</th><th>SMS</th><th>Email</th><th></th></tr>` +
     (visibleStudents
       .map(
         (s) =>
@@ -618,10 +656,11 @@ async function loadStudents() {
            <td>${esc(clsLabel(s))}</td>
            <td>${s.has_rfid_uid ? '<span class="muted">RFID protected</span>' : '<span class="muted">none</span>'}</td>
            <td>${s.has_sms_contact ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
+           <td>${s.has_email_contact ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
            <td><button class="small ghost" data-edit="${s.id}">Edit</button>
                <button class="small ghost" data-del="${s.id}">Remove</button></td></tr>`
       )
-      .join('') || `<tr><td colspan="${studentMarkMode ? 6 : 5}" class="muted">No students saved yet.</td></tr>`);
+      .join('') || `<tr><td colspan="${studentMarkMode ? 7 : 6}" class="muted">No students saved yet.</td></tr>`);
   $('#stuTable').querySelectorAll('[data-student-detail]').forEach((link) => {
     link.onclick = (event) => {
       event.preventDefault();
@@ -683,6 +722,8 @@ async function showStudentDetails(id, updateUrl = false) {
   $('#studentDetailsParent').textContent = details.parent_name || '-';
   $('#studentDetailsPhone').textContent = details.parent_phone || '-';
   $('#studentDetailsConsent').textContent = details.consent ? 'Yes' : 'No';
+  $('#studentDetailsEmail').textContent = details.parent_email || '-';
+  $('#studentDetailsEmailConsent').textContent = details.email_consent ? 'Yes' : 'No';
   $('#studentDetailsMsg').textContent = '';
 }
 
@@ -752,7 +793,9 @@ $('#stuRemoveSelected').onclick = async () => {
   } catch (err) {
     $('#stuRemoveMsg').className = 'err';
     $('#stuRemoveMsg').textContent = `${err.message}. Reload the student list and try again if the students are still active.`;
-    await loadStudents().catch(() => {});
+    await loadStudents().catch((refreshError) => {
+      $('#stuRemoveMsg').textContent += ` The student list could not be refreshed: ${refreshError.message}`;
+    });
   }
 };
 
@@ -888,6 +931,8 @@ async function editStudent(id) {
   $('#sfParent').value = details.parent_name || '';
   $('#sfPhone').value = details.parent_phone || '';
   $('#sfConsent').checked = !!details.consent;
+  $('#sfEmail').value = details.parent_email || '';
+  $('#sfEmailConsent').checked = !!details.email_consent;
   $('#sfMsg').textContent = '';
 }
 
@@ -939,6 +984,8 @@ $('#stuForm').onsubmit = async (e) => {
     parent_name: $('#sfParent').value,
     parent_phone: $('#sfPhone').value,
     consent: $('#sfConsent').checked,
+    parent_email: $('#sfEmail').value,
+    email_consent: $('#sfEmailConsent').checked,
   };
   const id = $('#sfId').value;
   try {
@@ -984,8 +1031,8 @@ async function loadRisk() {
       )
       .join('') || '<tr><td colspan="8" class="muted">Nobody flagged right now.</td></tr>');
 }
-$('#riskFilter').onchange = () => loadRisk().catch(() => {});
-$('#riskMonth').onchange = () => loadRisk().catch((e) => alert(e.message));
+$('#riskFilter').onchange = () => loadRisk().then(clearLoadError).catch(showLoadError);
+$('#riskMonth').onchange = () => loadRisk().then(clearLoadError).catch(showLoadError);
 $('#riskExport').onclick = () => {
   const month = encodeURIComponent($('#riskMonth').value);
   download(`/export/risk.csv?month=${month}`, `early-warning-${$('#riskMonth').value}.csv`).catch((e) => alert(e.message));
@@ -995,30 +1042,30 @@ $('#riskExport').onclick = () => {
 async function loadNotifications() {
   const rows = await api('/notifications');
   $('#notifTable').innerHTML =
-    '<tr><th>Time</th><th>Student</th><th>To</th><th>Message</th><th>Status</th></tr>' +
+    '<tr><th>Time</th><th>Student</th><th>Channel</th><th>To</th><th>Message</th><th>Status</th></tr>' +
     (rows
       .map(
         (n) =>
-          `<tr><td>${esc((n.ts || '').replace('T', ' '))}</td><td>${esc(n.name)}</td><td>${esc(n.phone)}</td>
+          `<tr><td>${esc((n.ts || '').replace('T', ' '))}</td><td>${esc(n.name)}</td><td>${esc(n.channel || 'sms')}</td><td>${esc(n.recipient || n.phone || '')}</td>
            <td>${esc(n.message)}</td>
            <td>${badge(String(n.status).startsWith('failed') ? 'failed' : 'sent', n.status)}<br><small class="muted">${esc(n.provider)}</small></td></tr>`
       )
-      .join('') || '<tr><td colspan="5" class="muted">No messages yet.</td></tr>');
+      .join('') || '<tr><td colspan="6" class="muted">No messages yet.</td></tr>');
 }
 
 $('#deleteAllSms').onclick = async () => {
-  if (!confirm('Permanently delete all SMS log entries? This does not recall messages already sent.')) return;
+  if (!confirm('Permanently delete all notification log entries? This does not recall messages already sent.')) return;
   const button = $('#deleteAllSms');
   button.disabled = true;
   $('#smsDeleteMsg').textContent = '';
   try {
     const result = await api('/notifications', { method: 'DELETE' });
-    $('#smsDeleteMsg').textContent = `${result.deleted} SMS log entr${result.deleted === 1 ? 'y' : 'ies'} deleted.`;
+    $('#smsDeleteMsg').textContent = `${result.deleted} notification log entr${result.deleted === 1 ? 'y' : 'ies'} deleted.`;
     await loadNotifications();
   } catch (err) {
     $('#smsDeleteMsg').textContent = err.status === 404
-      ? 'This server does not support deleting SMS logs yet. Restart the server with npm start, then reload this page.'
-      : `Could not delete SMS logs: ${err.message}`;
+      ? 'This server does not support deleting notification logs yet. Restart the server with npm start, then reload this page.'
+      : `Could not delete notification logs: ${err.message}`;
   } finally {
     button.disabled = false;
   }
@@ -1153,6 +1200,7 @@ async function loadSettings() {
   $('#afternoonEndTime').value = settings.afternoon_end_time;
   $('#setDebounce').value = settings.debounce_sec;
   $('#setNotify').checked = settings.notify_enabled === '1';
+  $('#setEmailNotify').checked = settings.email_notify_enabled === '1';
   const hols = await api('/holidays');
   $('#holTable').innerHTML =
     hols
@@ -1182,6 +1230,7 @@ $('#setForm').onsubmit = async (e) => {
         afternoon_end_time: $('#afternoonEndTime').value,
         debounce_sec: $('#setDebounce').value,
         notify_enabled: $('#setNotify').checked ? '1' : '0',
+        email_notify_enabled: $('#setEmailNotify').checked ? '1' : '0',
       },
     });
     $('#schoolName').textContent = settings.school_name;
@@ -1208,8 +1257,9 @@ $('#accountForm').onsubmit = async (e) => {
     });
     token = result.token;
     username = result.admin_username;
-    localStorage.setItem('token', token);
-    localStorage.setItem('username', username);
+    const storage = authStorage();
+    storage.setItem('token', token);
+    storage.setItem('username', username);
     $('#adminUsername').value = result.admin_username;
     $('#userUsername').value = result.user_username;
     $('#currentAdminPassword').value = '';
@@ -1239,9 +1289,10 @@ $('#clearAllData').onclick = async () => {
     token = result.token;
     username = result.username;
     role = 'admin';
-    localStorage.setItem('token', token);
-    localStorage.setItem('username', username);
-    localStorage.setItem('role', role);
+    const storage = authStorage();
+    storage.setItem('token', token);
+    storage.setItem('username', username);
+    storage.setItem('role', role);
     settings = await api('/settings');
     $('#schoolName').textContent = settings.school_name;
     $('#setName').value = settings.school_name;
@@ -1251,6 +1302,7 @@ $('#clearAllData').onclick = async () => {
     $('#afternoonEndTime').value = settings.afternoon_end_time;
     $('#setDebounce').value = settings.debounce_sec;
     $('#setNotify').checked = settings.notify_enabled === '1';
+    $('#setEmailNotify').checked = settings.email_notify_enabled === '1';
     selectedStudentIds.clear();
     $('#clearAllDataMsg').textContent = `All saved data erased (${total} records). Accounts were reset to configured credentials and settings returned to defaults.`;
     await Promise.all([

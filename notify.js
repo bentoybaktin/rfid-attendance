@@ -17,7 +17,6 @@ function normalizePhone(phone) {
   throw new Error('Invalid Philippine mobile number; expected 09XXXXXXXXX or +639XXXXXXXXX');
 }
 
-// "console" only prints (safe default for development); "phone-gateway" sends JSON to the configured gateway.
 async function sendSMS(phone, message) {
   const provider = (process.env.SMS_PROVIDER || 'console').toLowerCase();
   if (provider === 'phone-gateway') {
@@ -36,49 +35,75 @@ async function sendSMS(phone, message) {
       body: JSON.stringify({ phone: recipient, message }),
     });
     if (!res.ok) throw new Error(`Phone gateway HTTP ${res.status}`);
-    return { provider, phone: recipient };
+    return { provider, recipient };
   }
   if (provider === 'console') {
     console.log(`[SMS:console] to ${phone}: ${message}`);
-    return { provider, phone };
+    return { provider, recipient: phone };
   }
   throw new Error(`Unsupported SMS_PROVIDER: ${provider}`);
 }
 
-async function logAndSend(student, kind, date, message) {
-  if (await getSetting('notify_enabled') !== '1') return false;
-  // Data Privacy Act: only message parents who gave consent.
-  if (!student.consent || !student.parent_phone) return false;
+async function sendEmail(email, subject, message) {
+  const { RESEND_API_KEY, EMAIL_FROM } = process.env;
+  if (!RESEND_API_KEY || !EMAIL_FROM) {
+    throw new Error('RESEND_API_KEY and EMAIL_FROM must be set to send email');
+  }
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ from: EMAIL_FROM, to: [email], subject, text: message }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new Error(`Resend email API HTTP ${response.status}`);
+  return { provider: 'resend', recipient: email };
+}
+
+async function logAndSend(student, kind, date, subject, message, channel) {
+  const isEmail = channel === 'email';
+  const enabled = await getSetting(isEmail ? 'email_notify_enabled' : 'notify_enabled');
+  const contact = isEmail ? student.parent_email : student.parent_phone;
+  const consent = isEmail ? student.email_consent : student.consent;
+  if (enabled !== '1' || !consent || !contact) return { attempted: false, sent: false };
+
   let status = 'sent';
-  let provider = (process.env.SMS_PROVIDER || 'console').toLowerCase();
-  let phone = student.parent_phone;
+  const provider = isEmail ? 'resend' : (process.env.SMS_PROVIDER || 'console').toLowerCase();
+  let recipient = contact;
   try {
-    const result = await sendSMS(phone, message);
-    provider = result.provider;
-    phone = result.phone;
-  } catch (e) {
-    status = 'failed: ' + e.message;
+    const result = isEmail
+      ? await sendEmail(contact, subject, message)
+      : await sendSMS(contact, message);
+    recipient = result.recipient;
+  } catch (error) {
+    status = `failed: ${error.message}`;
   }
   await db.prepare(
-    'INSERT INTO notifications(student_id,kind,date,phone,message,status,provider,ts) VALUES(?,?,?,?,?,?,?,?)'
-  ).run(student.id, kind, date, phone, message, status, provider, nowManila().ts);
-  return status === 'sent';
+    `INSERT INTO notifications(student_id,kind,date,phone,message,status,provider,ts,channel,recipient)
+     VALUES(?,?,?,?,?,?,?,?,?,?)`
+  ).run(student.id, kind, date, isEmail ? null : recipient, message, status, provider,
+    nowManila().ts, channel, recipient);
+  return { attempted: true, sent: status === 'sent' };
 }
 
-function notifyParent(student, type, status, time, date) {
-  return getSetting('school_name').then((school) => {
-    const messages = {
-      MORNING_IN: `arrived for morning class${status === 'late' ? ' (late)' : ''}`,
-      MORNING_OUT: 'left after morning class',
-      AFTERNOON_IN: `arrived for afternoon class${status === 'late' ? ' (late)' : ''}`,
-      AFTERNOON_OUT: 'left after afternoon class',
-    };
-    const message = `${school}: ${student.name} ${messages[type]} at ${fmt12(time)}.`;
-    return logAndSend(student, type, date, message);
-  });
+async function notifyParent(student, type, status, time, date) {
+  const school = await getSetting('school_name');
+  const events = {
+    MORNING_IN: `arrived for morning class${status === 'late' ? ' (late)' : ''}`,
+    MORNING_OUT: 'left after morning class',
+    AFTERNOON_IN: `arrived for afternoon class${status === 'late' ? ' (late)' : ''}`,
+    AFTERNOON_OUT: 'left after afternoon class',
+  };
+  const message = `${school}: ${student.name} ${events[type]} at ${fmt12(time)}.`;
+  const subject = `${student.name} attendance update - ${school}`;
+  const results = await Promise.all(['sms', 'email'].map((channel) =>
+    logAndSend(student, type, date, subject, message, channel)
+  ));
+  return results.some((result) => result.sent);
 }
 
-// Sends one "absent" SMS per student per day. Safe to press more than once.
 async function sendAbsentNotices(date) {
   const school = await getSetting('school_name');
   const absentees = await db
@@ -90,15 +115,20 @@ async function sendAbsentNotices(date) {
     )
     .all(date, date);
   let sent = 0;
-  for (const s of absentees) {
-    const msg = `${school}: ${s.name} was marked ABSENT today (${date}). If this is unexpected, please contact the class adviser.`;
-    const delivered = await logAndSend(s, 'ABSENT', date, msg);
-    if ((await getSetting('notify_enabled')) === '1' && s.consent && s.parent_phone) {
-      await db.prepare('INSERT INTO absence_notices(student_id,date) VALUES(?,?) ON CONFLICT DO NOTHING').run(s.id, date);
+  for (const student of absentees) {
+    const message = `${school}: ${student.name} was marked ABSENT today (${date}). If this is unexpected, please contact the class adviser.`;
+    const subject = `${student.name} absence notice - ${school}`;
+    const results = await Promise.all(['sms', 'email'].map((channel) =>
+      logAndSend(student, 'ABSENT', date, subject, message, channel)
+    ));
+    const attempted = results.some((result) => result.attempted);
+    if (attempted) {
+      await db.prepare('INSERT INTO absence_notices(student_id,date) VALUES(?,?) ON CONFLICT DO NOTHING')
+        .run(student.id, date);
     }
-    if (delivered) sent++;
+    sent += results.filter((result) => result.sent).length;
   }
   return { checked: absentees.length, sent };
 }
 
-module.exports = { notifyParent, sendAbsentNotices, fmt12, normalizePhone };
+module.exports = { notifyParent, sendAbsentNotices, fmt12, normalizePhone, sendEmail };

@@ -102,6 +102,10 @@ app.use((req, res, next) => {
 });
 
 app.use('/api', (req, res, next) => {
+  res.set({
+    'Cache-Control': 'no-store',
+    Pragma: 'no-cache',
+  });
   const origin = req.get('origin');
   if (origin) {
     let sameOrigin = false;
@@ -156,13 +160,14 @@ app.use(express.json({ limit: '64kb' }));
 
 // ---------- auth ----------
 const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
-const signToken = (account) => {
+const signToken = (account, rememberMe = false) => {
   const payload = Buffer.from(JSON.stringify({
     userId: account.id,
     role: account.role,
     username: account.username,
     version: crypto.createHash('sha256').update(account.password_hash).digest('hex'),
-    expiresAt: Date.now() + 12 * 3600 * 1000,
+    rememberMe,
+    expiresAt: Date.now() + (rememberMe ? 30 * 24 * 3600 * 1000 : 12 * 3600 * 1000),
   })).toString('base64url');
   const signature = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('base64url');
   return `${payload}.${signature}`;
@@ -254,7 +259,7 @@ app.post('/api/login', loginRateLimit, async (req, res) => {
   const given = passwordHash(String(req.body.password || ''), account ? account.salt : 'invalid-account-salt');
   const ok = account && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(account.password_hash));
   if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
-  const token = signToken(account);
+  const token = signToken(account, req.body.remember_me === true);
   res.json({ token, role: account.role, username: account.username });
 });
 
@@ -534,7 +539,7 @@ app.put('/api/account', async (req, res) => {
   await db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
     .run(username, salt, password_hash, account.id);
 
-  const token = signToken({ id: account.id, role: 'admin', username, password_hash });
+  const token = signToken({ id: account.id, role: 'admin', username, password_hash }, req.auth.rememberMe === true);
   res.json({ token, username });
 });
 
@@ -622,7 +627,10 @@ app.put('/api/accounts', async (req, res) => {
       .run(userUsername, userSalt, userPasswordHash, user.id);
   });
 
-  const token = signToken({ id: admin.id, role: 'admin', username: adminUsername, password_hash: adminPasswordHash });
+  const token = signToken(
+    { id: admin.id, role: 'admin', username: adminUsername, password_hash: adminPasswordHash },
+    req.auth.rememberMe === true
+  );
   res.json({ token, admin_username: adminUsername, user_username: userUsername });
 });
 
@@ -666,7 +674,7 @@ app.delete('/api/data', async (req, res) => {
     walTruncated = true;
   }
   const admin = await db.prepare('SELECT id,username,role,password_hash FROM auth_users WHERE role=?').get('admin');
-  const token = signToken(admin);
+  const token = signToken(admin, req.auth.rememberMe === true);
   res.json({ ok: true, deleted, token, username: admin.username, vacuumed, wal_truncated: walTruncated });
 });
 
@@ -748,7 +756,7 @@ app.post('/api/classes', async (req, res) => {
 app.get('/api/students', async (req, res) =>
   res.json((await db.prepare(
     `SELECT id,name,surname,first_name,middle_name,name_extension,grade,section,
-            rfid_uid,parent_phone,consent
+            rfid_uid,parent_phone,consent,parent_email,email_consent
      FROM students WHERE active=1 ORDER BY grade,section,surname,first_name,name`
   ).all())
     .map((student) => {
@@ -763,6 +771,7 @@ app.get('/api/students', async (req, res) =>
         section: student.section,
         has_rfid_uid: Boolean(student.rfid_uid),
         has_sms_contact: Boolean(student.consent && student.parent_phone),
+        has_email_contact: Boolean(student.email_consent && student.parent_email),
         display_name: displayStudentName(student),
         full_name: fullStudentName(student),
       };
@@ -775,6 +784,7 @@ async function readStudent(body) {
   const first_name = String(body.first_name || '').trim();
   const middle_name = String(body.middle_name || '').trim() || null;
   const name_extension = String(body.name_extension || '').trim() || null;
+  const parent_email = String(body.parent_email || '').trim() || null;
   const name = `${surname}, ${first_name}${middle_name ? ` ${middle_name.charAt(0).toUpperCase()}.` : ''}${name_extension ? ` ${name_extension}` : ''}`;
   const s = {
     lrn: (body.lrn || '').trim() || null,
@@ -789,12 +799,17 @@ async function readStudent(body) {
     parent_name: (body.parent_name || '').trim() || null,
     parent_phone: (body.parent_phone || '').replace(/[^0-9+]/g, '') || null,
     consent: body.consent ? 1 : 0,
+    parent_email,
+    email_consent: body.email_consent ? 1 : 0,
   };
   if (!surname || !first_name || !s.grade || !s.section) return { error: 'Surname, first name, grade and section are required' };
   if (surname.length > 100 || first_name.length > 100 || (middle_name && middle_name.length > 100) || (name_extension && name_extension.length > 30)) {
     return { error: 'Name fields are too long' };
   }
   if (s.grade < 7 || s.grade > 12) return { error: 'Grade must be between 7 and 12' };
+  if (parent_email && (parent_email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parent_email))) {
+    return { error: 'Enter a valid parent email address' };
+  }
   if (!await db.prepare('SELECT 1 FROM sections WHERE grade=? AND section=?').get(s.grade, s.section)) {
     return { error: 'Choose an existing grade and section' };
   }
@@ -827,8 +842,8 @@ app.post('/api/user/students', async (req, res) => {
 
   try {
     const result = await db.prepare(
-      `INSERT INTO students(lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,parent_name,parent_phone,consent)
-       VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent)
+      `INSERT INTO students(lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,parent_name,parent_phone,consent,parent_email,email_consent)
+       VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent,@parent_email,@email_consent)
        RETURNING id`
     ).get(s);
     if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
@@ -851,8 +866,8 @@ app.post('/api/students', async (req, res) => {
   try {
     const r = await db
       .prepare(
-        `INSERT INTO students(lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,parent_name,parent_phone,consent)
-         VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent)
+        `INSERT INTO students(lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,parent_name,parent_phone,consent,parent_email,email_consent)
+         VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent,@parent_email,@email_consent)
          RETURNING id`
       )
       .get(s);
@@ -891,7 +906,7 @@ app.get('/api/students/:id', async (req, res) => {
   if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid student id' });
   const student = await db.prepare(
     `SELECT id,lrn,name,surname,first_name,middle_name,name_extension,grade,section,
-            rfid_uid,parent_name,parent_phone,consent
+            rfid_uid,parent_name,parent_phone,consent,parent_email,email_consent
      FROM students WHERE id=? AND active=1`
   ).get(id);
   if (!student) return res.status(404).json({ error: 'Student not found' });
@@ -909,7 +924,8 @@ app.put('/api/students/:id', async (req, res) => {
     await db.prepare(
       `UPDATE students SET lrn=@lrn,name=@name,surname=@surname,first_name=@first_name,middle_name=@middle_name,name_extension=@name_extension,
        grade=@grade,section=@section,rfid_uid=@rfid_uid,
-       parent_name=@parent_name,parent_phone=@parent_phone,consent=@consent WHERE id=@id`
+       parent_name=@parent_name,parent_phone=@parent_phone,consent=@consent,
+       parent_email=@parent_email,email_consent=@email_consent WHERE id=@id`
     ).run({ ...s, id: req.params.id });
     if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
     res.json({ ok: true });
@@ -1224,6 +1240,41 @@ app.use(express.static(path.join(__dirname, 'public'), {
   index: 'index.html',
   maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0,
 }));
+
+app.use((req, res) => {
+  if (req.path === '/api' || req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'API endpoint not found' });
+  }
+  res.status(404).type('text/plain').send('Not Found');
+});
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+
+  const status = Number(error.status || error.statusCode);
+  const clientError = status >= 400 && status < 500;
+  if (!clientError) {
+    console.error('Request failed', {
+      method: req.method,
+      path: req.path,
+      error: error.name || 'Error',
+      code: error.code,
+    });
+  }
+
+  const responseStatus = clientError ? status : 500;
+  if (req.path === '/api' || req.path.startsWith('/api/')) {
+    const message = error.type === 'entity.parse.failed'
+      ? 'Invalid JSON request'
+      : error.type === 'entity.too.large'
+        ? 'Request body too large'
+        : clientError ? 'Invalid request' : 'Internal server error';
+    return res.status(responseStatus).json({ error: message });
+  }
+  res.status(responseStatus).type('text/plain').send(
+    clientError ? 'Invalid request' : 'Internal server error'
+  );
+});
 
 if (require.main === module) {
   appReady.then(() => {

@@ -1,9 +1,9 @@
-# RFID Attendance, Parent SMS and Early-Warning Dashboard
+# RFID Attendance, Parent Notifications and Early-Warning Dashboard
 
 A small web system for Philippine high schools:
 
 1. **Attendance**: students tap an RFID ID card at the gate; the web dashboard shows live taps, daily attendance per section, and exports an SF2-style monthly CSV.
-2. **Parent notification**: parents get an SMS when their child arrives (with a "late" note if applicable) or leaves, plus an optional "absent today" text.
+2. **Parent notification**: opted-in parents can get SMS and/or email when their child arrives (with a "late" note if applicable) or leaves, plus an optional "absent today" notice.
 3. **Early warning**: every student is scored from the selected calendar month (absences, lateness, consecutive absences, rising trend). Admins can review previous months. Guidance counselors get a High / Medium list with reasons and a suggested action, exportable as CSV.
 
 Stack: Node.js + Express + SQLite locally or Neon Postgres on Vercel, plain HTML/JavaScript dashboard, and ESP32 + RC522 reader.
@@ -42,17 +42,29 @@ Vercel runs the Node.js app as a serverless function. Use Neon Postgres for pers
    - `AUTH_SECRET`: a long random secret, generated locally with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Keep it stable between deployments.
    - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `USER_USERNAME`, `USER_PASSWORD`, and `DEVICE_KEY`: use strong, unique values.
    - SMS gateway variables only if using a real phone gateway.
+   - `RESEND_API_KEY` and `EMAIL_FROM` to enable parent email notifications. Create a Resend account, verify a sending domain, create an API key, and set `EMAIL_FROM` to an address on that verified domain (for example, `Attendance <attendance@school.example>`).
 5. Deploy. On its first request, the app creates the Neon schema and configured accounts. The dashboard is served from `public/`, and `/api/*` is routed to the Express function.
 6. Open the deployed URL and sign in. In `firmware/esp32_rc522/esp32_rc522.ino`, set `SERVER_URL` to `https://YOUR-VERCEL-DOMAIN/api/tap` and `DEVICE_KEY` to match Vercel, then upload the sketch.
 
 Keep Neon credentials and all secrets in Vercel's environment-variable settings, never in source control. A new Neon database starts empty; data in local `data.db` is not imported automatically. Migrate and verify real records separately before relying on them. Never run the demo seeder against real attendance data.
 
+### Enabling parent email notifications
+
+1. Verify a sending domain with Resend and create an API key with permission to send email. Keep the key secret.
+2. In Vercel, add `RESEND_API_KEY` and `EMAIL_FROM` under **Project → Settings → Environment Variables** for the environments you use, then redeploy so the running app receives them. For local development, put them in your untracked `.env` file.
+3. In the dashboard's **Settings**, choose whether to send SMS, email, or both, then save.
+4. Edit each student and enter the parent's email address. Record the parent's email consent before checking the consent box. Email is sent only when email is enabled, an address is saved, and consent is recorded. SMS has its own contact and consent fields.
+5. Trigger an attendance scan or the absence-notification action and check the **Notifications** log for delivery status. Test with an address you control before enabling messages for families.
+
+The app sends email through Resend's API; it does not store provider credentials in the database. Failed sends appear in the notification log. The provider's delivery, bounce, and spam handling still apply.
+
 ## API security
 
-- The API requires a signed bearer token for dashboard requests. Tokens expire after 12 hours; changing account credentials invalidates tokens signed with the old password hash.
+- The API requires a signed bearer token for dashboard requests. Without **Remember me**, sign-in data is kept only for the browser tab and tokens expire after 12 hours; closing the tab signs out. With **Remember me**, the browser keeps the sign-in for up to 30 days. Changing account credentials invalidates tokens signed with the old password hash.
 - Admins have full access. User accounts are limited to the live scan view, reading section names, and submitting new student registrations; they cannot read the existing student roster or attendance reports.
 - The API is same-origin by default. Set `CORS_ORIGINS` to a comma-separated list of exact trusted HTTP(S) origins only when separate web clients need cross-origin access. Do not use wildcard origins.
 - Security headers (including a restrictive Content Security Policy and HSTS) are sent by Express and configured for Vercel-served static pages. Client-rendered record values are HTML-escaped, and CSV exports neutralize formula-leading values.
+- Only files inside `public/` are served as static assets; dotfiles are denied. API responses are marked `no-store`, unknown routes return generic 404 responses, and request failures return safe client messages while server errors are logged without exposing stack traces to clients.
 - The bulk `GET /api/students` roster omits LRN, RFID UID, guardian name, and phone; it returns only boolean indicators for assigned cards and SMS eligibility. User accounts cannot read the roster or reports. Admin-only student detail/edit, attendance, and explicit CSV export features can still return LRN or other information needed for those tasks. Any information delivered to an authorized browser is visible in its Network tools; authorization and minimizing returned fields limit exposure, but do not make client-received data secret.
 - Admins can configure two password-recovery questions in **Settings → Account**. Answers are normalized and stored as independently salted password hashes. Recovery requires both answers, uses a single-use 10-minute challenge, resets the admin password to a minimum of 12 characters, and is limited to five combined challenge/reset attempts per IP per 15 minutes using the database. Security-question answers may be guessable or discoverable; choose private answers and use a strong, unique password.
 - API requests are limited to 3,000 per IP per 15 minutes and RFID device requests to 120 per IP per minute using `express-rate-limit`. Sign-in requests are limited to 10 per IP per 15 minutes using database-backed counters, shared across server instances, with standard `RateLimit-*` response headers. General API/device limits use the default in-memory store; configure a shared store for those limits when deploying multiple instances. Password-recovery attempts are limited separately using the database.
@@ -78,21 +90,21 @@ Keep Neon credentials and all secrets in Vercel's environment-variable settings,
 - Unknown or inactive cards show **Try again** on the student scan screen and are remembered so staff can register them.
 - No tap on a school day = **absent**. Weekends and listed holidays are skipped.
 
-## SMS
+## Parent notifications
 
-`SMS_PROVIDER=console` (default) only prints messages to the terminal. Messages are also recorded in the **SMS log** tab.
+SMS and email can be enabled independently in **Settings**, so the school can use either channel or both. Notifications are sent only when the corresponding parent contact and consent are saved. All attempts and provider failures appear in the **Notifications** tab.
 
-For automatic arrival/departure texts through the phone gateway, set `SMS_PROVIDER=phone-gateway` and configure `PHONE_GATEWAY_URL`, `PHONE_GATEWAY_USER`, and `PHONE_GATEWAY_PASSWORD` locally in `.env` or as Vercel environment variables. The app sends a JSON `POST` with Basic authentication. Phone numbers are normalized to `+63`.
+SMS defaults to `SMS_PROVIDER=console`, which prints messages to the terminal without sending them. For automatic texts through the phone gateway, set `SMS_PROVIDER=phone-gateway` and configure `PHONE_GATEWAY_URL`, `PHONE_GATEWAY_USER`, and `PHONE_GATEWAY_PASSWORD` locally in `.env` or as Vercel environment variables. The app sends a JSON `POST` with Basic authentication. Phone numbers are normalized to `+63`.
 
-To test without messaging parents, set `PHONE_GATEWAY_TEST_RECIPIENT` locally or in Vercel to your own mobile number. Texts are triggered by recent RFID taps when **Send parent SMS on tap** is enabled. Only students with a parent phone number and recorded consent are messaged. The **SMS log** tab shows provider failures.
+To test texts without messaging parents, set `PHONE_GATEWAY_TEST_RECIPIENT` locally or in Vercel to your own mobile number. SMS is triggered by attendance scans when **Send parent SMS on tap** is enabled. Email setup steps are in [Enabling parent email notifications](#enabling-parent-email-notifications).
 
-SMS costs real money per message and per student per day, so estimate your volume first. You can switch tap texts off in Settings and keep only the manual "absent" notice.
+SMS and email are triggered by attendance scans when their respective settings are enabled. The manual **Notify parents of absentees** action uses the same channel settings and per-student consent. Email delivery is subject to Resend's delivery and rate limits; SMS may incur charges per message.
 
-Press **Notify parents of absentees** on the Overview tab after your late cutoff to manually text each absent student's parent once per day.
+Press **Notify parents of absentees** on the Overview tab after your late cutoff to send the configured notice to each opted-in absent student's parent once per day.
 
-The Overview tab can permanently delete live tap feed entries, and the SMS log tab can permanently delete SMS history entries. These actions keep attendance records, tap-processing state, and daily absence-notification safeguards intact. Deleting an SMS log does not recall messages already sent.
+The Overview tab can permanently delete live tap feed entries, and the Notifications tab can permanently delete notification history. These actions keep attendance records, tap-processing state, and daily absence-notification safeguards intact. Deleting a log does not recall messages already sent.
 
-Admins can permanently clear all saved data from **Settings**. The action requires typing `DELETE ALL`; it deletes students, attendance, tap history, SMS logs, unknown cards, absence-notification history, holidays, saved settings, and saved account credentials. Admin and user accounts are recreated from configured credentials, settings return to defaults, and other sessions are signed out. This cannot erase copies outside the live database (for example, backups or filesystem snapshots).
+Admins can permanently clear all saved data from **Settings**. The action requires typing `DELETE ALL`; it deletes students, attendance, tap history, notification logs, unknown cards, absence-notification history, holidays, saved settings, and saved account credentials. Admin and user accounts are recreated from configured credentials, settings return to defaults, and other sessions are signed out. This cannot erase copies outside the live database (for example, backups or filesystem snapshots).
 
 ## Early-warning scoring
 

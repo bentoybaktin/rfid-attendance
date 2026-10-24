@@ -139,8 +139,10 @@ CREATE TABLE IF NOT EXISTS students(
   id SERIAL PRIMARY KEY, lrn TEXT UNIQUE, name TEXT NOT NULL, surname TEXT,
   first_name TEXT, middle_name TEXT, name_extension TEXT, grade INTEGER NOT NULL,
   section TEXT NOT NULL, rfid_uid TEXT UNIQUE, parent_name TEXT, parent_phone TEXT,
-  consent INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+  consent INTEGER DEFAULT 0, parent_email TEXT, email_consent INTEGER DEFAULT 0, active INTEGER DEFAULT 1
 );
+ALTER TABLE students ADD COLUMN IF NOT EXISTS parent_email TEXT;
+ALTER TABLE students ADD COLUMN IF NOT EXISTS email_consent INTEGER DEFAULT 0;
 CREATE TABLE IF NOT EXISTS scans(
   id SERIAL PRIMARY KEY, student_id INTEGER NOT NULL, uid TEXT, ts TEXT NOT NULL,
   date TEXT NOT NULL, type TEXT NOT NULL
@@ -168,8 +170,10 @@ CREATE TABLE IF NOT EXISTS scan_attempts(
 ALTER TABLE scan_attempts ADD COLUMN IF NOT EXISTS expected_type TEXT;
 CREATE TABLE IF NOT EXISTS notifications(
   id SERIAL PRIMARY KEY, student_id INTEGER, kind TEXT, date TEXT, phone TEXT,
-  message TEXT, status TEXT, provider TEXT, ts TEXT
+  message TEXT, status TEXT, provider TEXT, ts TEXT, channel TEXT DEFAULT 'sms', recipient TEXT
 );
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS channel TEXT DEFAULT 'sms';
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS recipient TEXT;
 CREATE TABLE IF NOT EXISTS absence_notices(
   student_id INTEGER NOT NULL, date TEXT NOT NULL, PRIMARY KEY(student_id, date)
 );
@@ -217,14 +221,15 @@ if (usePostgres) {
       id INTEGER PRIMARY KEY AUTOINCREMENT, lrn TEXT UNIQUE, name TEXT NOT NULL,
       surname TEXT, first_name TEXT, middle_name TEXT, name_extension TEXT,
       grade INTEGER NOT NULL, section TEXT NOT NULL, rfid_uid TEXT UNIQUE,
-      parent_name TEXT, parent_phone TEXT, consent INTEGER DEFAULT 0, active INTEGER DEFAULT 1
+      parent_name TEXT, parent_phone TEXT, consent INTEGER DEFAULT 0,
+      parent_email TEXT, email_consent INTEGER DEFAULT 0, active INTEGER DEFAULT 1
     );
     CREATE TABLE IF NOT EXISTS scans(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER NOT NULL,uid TEXT,ts TEXT NOT NULL,date TEXT NOT NULL,type TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS tap_state(student_id INTEGER NOT NULL,date TEXT NOT NULL,ts TEXT NOT NULL,type TEXT NOT NULL,PRIMARY KEY(student_id,date));
     CREATE TABLE IF NOT EXISTS attendance(student_id INTEGER NOT NULL,date TEXT NOT NULL,time_in TEXT,time_out TEXT,status TEXT NOT NULL,morning_in TEXT,morning_out TEXT,afternoon_in TEXT,afternoon_out TEXT,PRIMARY KEY(student_id,date));
     CREATE TABLE IF NOT EXISTS unknown_scans(uid TEXT PRIMARY KEY,ts TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS scan_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,uid TEXT,ts TEXT NOT NULL,date TEXT NOT NULL,code TEXT NOT NULL,message TEXT NOT NULL,expected_type TEXT);
-    CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,kind TEXT,date TEXT,phone TEXT,message TEXT,status TEXT,provider TEXT,ts TEXT);
+    CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,kind TEXT,date TEXT,phone TEXT,message TEXT,status TEXT,provider TEXT,ts TEXT,channel TEXT DEFAULT 'sms',recipient TEXT);
     CREATE TABLE IF NOT EXISTS absence_notices(student_id INTEGER NOT NULL,date TEXT NOT NULL,PRIMARY KEY(student_id,date));
     CREATE TABLE IF NOT EXISTS holidays(date TEXT PRIMARY KEY,name TEXT);
     CREATE TABLE IF NOT EXISTS sections(grade INTEGER NOT NULL,section TEXT NOT NULL,PRIMARY KEY(grade,section));
@@ -238,6 +243,9 @@ if (usePostgres) {
     CREATE INDEX IF NOT EXISTS idx_att_date ON attendance(date);
   `);
   const columns = new Set(sqlite.prepare('PRAGMA table_info(students)').all().map((column) => column.name));
+  for (const [name, type] of [['parent_email', 'TEXT'], ['email_consent', 'INTEGER DEFAULT 0']]) {
+    if (!columns.has(name)) sqlite.exec(`ALTER TABLE students ADD COLUMN ${name} ${type}`);
+  }
   for (const [name, type] of [['surname', 'TEXT'], ['first_name', 'TEXT'], ['middle_name', 'TEXT'], ['name_extension', 'TEXT']]) {
     if (!columns.has(name)) sqlite.exec(`ALTER TABLE students ADD COLUMN ${name} ${type}`);
   }
@@ -247,6 +255,10 @@ if (usePostgres) {
   }
   const attemptColumns = new Set(sqlite.prepare('PRAGMA table_info(scan_attempts)').all().map((column) => column.name));
   if (!attemptColumns.has('expected_type')) sqlite.exec('ALTER TABLE scan_attempts ADD COLUMN expected_type TEXT');
+  const notificationColumns = new Set(sqlite.prepare('PRAGMA table_info(notifications)').all().map((column) => column.name));
+  for (const [name, type] of [['channel', "TEXT DEFAULT 'sms'"], ['recipient', 'TEXT']]) {
+    if (!notificationColumns.has(name)) sqlite.exec(`ALTER TABLE notifications ADD COLUMN ${name} ${type}`);
+  }
   sqlite.exec('UPDATE attendance SET morning_in=time_in WHERE morning_in IS NULL AND time_in IS NOT NULL');
   sqlite.exec('UPDATE attendance SET morning_out=time_out WHERE morning_out IS NULL AND time_out IS NOT NULL');
   sqlite.prepare('INSERT OR IGNORE INTO sections(grade,section) SELECT DISTINCT grade,section FROM students').run();
@@ -267,6 +279,7 @@ const DEFAULTS = {
   afternoon_late_time: '',
   afternoon_end_time: '',
   notify_enabled: '1',
+  email_notify_enabled: '0',
   debounce_sec: '60',
 };
 
