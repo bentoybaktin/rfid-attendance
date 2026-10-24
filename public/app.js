@@ -1,3 +1,7 @@
+if (window.location.pathname === '/index.php') {
+  window.location.replace('/');
+}
+
 const $ = (s) => document.querySelector(s);
 function clearLoadError() {
   $('#loadError').textContent = '';

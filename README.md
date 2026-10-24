@@ -20,6 +20,8 @@ Sign in as admin (default username `admin`, password `admin123`) or as user (def
 
 Admins can open a student's shareable detail URL by selecting their name in **Students**. These `/students/<id>` links require an authenticated admin account.
 
+For compatibility with PHP-style links, `/index.php?url=%2Fadmin%2Fdashboard` redirects to the existing dashboard at `/`. It does not add a PHP runtime or bypass the normal sign-in and role checks.
+
 Run with your own secrets:
 
 ```bash
