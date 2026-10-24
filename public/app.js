@@ -410,6 +410,7 @@ const loaders = {
   notifications: loadNotifications,
   settings: loadSettings,
 };
+let tabLoadId = 0;
 
 function showTab(name, updateUrl = false) {
   if (!validTabs.has(name)) name = 'overview';
@@ -428,7 +429,21 @@ function showTab(name, updateUrl = false) {
   clearLoadError();
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + name));
   document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
-  loaders[name]().then(clearLoadError).catch(showLoadError);
+  const loadId = ++tabLoadId;
+  const tabName = document.querySelector(`#tabs [data-tab="${name}"]`)?.textContent.trim() || 'page';
+  $('#tabLoadingMessage').textContent = `Loading ${tabName}...`;
+  $('#tabLoading').classList.remove('hidden');
+  $('#app > main').setAttribute('aria-busy', 'true');
+  loaders[name]().then(() => {
+    if (loadId !== tabLoadId) return;
+    clearLoadError();
+  }).catch((error) => {
+    if (loadId === tabLoadId) showLoadError(error);
+  }).finally(() => {
+    if (loadId !== tabLoadId) return;
+    $('#tabLoading').classList.add('hidden');
+    $('#app > main').setAttribute('aria-busy', 'false');
+  });
   if (name === 'overview') {
     timer = setInterval(() => loadOverview().then(clearLoadError).catch(showLoadError), 5000);
   }

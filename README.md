@@ -22,6 +22,8 @@ Admins can open a student's shareable detail URL by selecting their name in **St
 
 For compatibility with PHP-style links, `/index.php?url=%2Fadmin%2Fdashboard` redirects to the existing dashboard at `/`. It does not add a PHP runtime or bypass the normal sign-in and role checks.
 
+When an admin selects a dashboard tab, a loading screen stays visible until that tab's data has loaded, then the completed tab is shown. This makes the transition clearer but does not replace server/database performance improvements.
+
 Run with your own secrets:
 
 ```bash

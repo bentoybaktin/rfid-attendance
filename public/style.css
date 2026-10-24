@@ -85,6 +85,28 @@ main {
   margin: 0;
   padding: clamp(12px, 1.5vw, 24px);
 }
+#app > main { position: relative; }
+.tab-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  color: var(--muted);
+  font-weight: 600;
+}
+.tab-loading-spinner {
+  width: 36px;
+  height: 36px;
+  border: 4px solid var(--line);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: tab-loading-spin 800ms linear infinite;
+}
+@keyframes tab-loading-spin { to { transform: rotate(360deg); } }
 
 .panel {
   background: var(--panel);
