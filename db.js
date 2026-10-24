@@ -191,6 +191,9 @@ CREATE TABLE IF NOT EXISTS recovery_challenges(
 CREATE TABLE IF NOT EXISTS recovery_rate_limits(
   ip_hash TEXT PRIMARY KEY, window_start BIGINT NOT NULL, request_count INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS login_rate_limits(
+  ip_hash TEXT PRIMARY KEY, window_start BIGINT NOT NULL, request_count INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_scans_student ON scans(student_id, ts);
 CREATE INDEX IF NOT EXISTS idx_att_date ON attendance(date);
 INSERT INTO sections(grade,section) SELECT DISTINCT grade,section FROM students ON CONFLICT DO NOTHING;
@@ -230,6 +233,7 @@ if (usePostgres) {
     CREATE TABLE IF NOT EXISTS admin_recovery(id INTEGER PRIMARY KEY CHECK(id=1),question1 TEXT NOT NULL,salt1 TEXT NOT NULL,answer_hash1 TEXT NOT NULL,question2 TEXT NOT NULL,salt2 TEXT NOT NULL,answer_hash2 TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS recovery_challenges(token_hash TEXT PRIMARY KEY,expires_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS recovery_rate_limits(ip_hash TEXT PRIMARY KEY,window_start INTEGER NOT NULL,request_count INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS login_rate_limits(ip_hash TEXT PRIMARY KEY,window_start INTEGER NOT NULL,request_count INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_scans_student ON scans(student_id,ts);
     CREATE INDEX IF NOT EXISTS idx_att_date ON attendance(date);
   `);

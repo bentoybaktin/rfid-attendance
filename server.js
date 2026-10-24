@@ -1,5 +1,5 @@
 const express = require('express');
-const { rateLimit } = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const path = require('path');
 const crypto = require('crypto');
 const {
@@ -218,11 +218,37 @@ function recoveryRateLimit(req, res, next) {
   })().catch(next);
 }
 
-app.post('/api/login', createRateLimiter({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  message: 'Too many sign-in attempts. Try again in 15 minutes.',
-}), async (req, res) => {
+function loginRateLimit(req, res, next) {
+  (async () => {
+    const now = Date.now();
+    const windowMs = 15 * 60 * 1000;
+    const ip = ipKeyGenerator(req.ip || req.socket.remoteAddress || 'unknown');
+    const ipHash = crypto.createHmac('sha256', AUTH_SECRET).update(ip).digest('hex');
+    await db.prepare('DELETE FROM login_rate_limits WHERE window_start<=?').run(now - 24 * 3600 * 1000);
+    const limit = await db.prepare(
+      `INSERT INTO login_rate_limits(ip_hash,window_start,request_count) VALUES(?,?,1)
+       ON CONFLICT(ip_hash) DO UPDATE SET
+         window_start=CASE WHEN login_rate_limits.window_start<=? THEN excluded.window_start ELSE login_rate_limits.window_start END,
+         request_count=CASE WHEN login_rate_limits.window_start<=? THEN 1 ELSE login_rate_limits.request_count+1 END
+       RETURNING window_start,request_count`
+    ).get(ipHash, now, now - windowMs, now - windowMs);
+    const resetAt = Number(limit.window_start) + windowMs;
+    const remaining = Math.max(0, 10 - Number(limit.request_count));
+    res.set({
+      'RateLimit-Policy': '10;w=900',
+      'RateLimit-Limit': '10',
+      'RateLimit-Remaining': String(remaining),
+      'RateLimit-Reset': String(Math.max(1, Math.ceil((resetAt - now) / 1000))),
+    });
+    if (Number(limit.request_count) > 10) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((resetAt - now) / 1000))));
+      return res.status(429).json({ error: 'Too many sign-in attempts. Try again in 15 minutes.' });
+    }
+    next();
+  })().catch(next);
+}
+
+app.post('/api/login', loginRateLimit, async (req, res) => {
   const username = String(req.body.username || '').trim();
   const account = await db.prepare('SELECT id,username,role,salt,password_hash FROM auth_users WHERE lower(username)=lower(?)').get(username);
   const given = passwordHash(String(req.body.password || ''), account ? account.salt : 'invalid-account-salt');
@@ -619,6 +645,7 @@ app.delete('/api/data', async (req, res) => {
       'admin_recovery',
       'recovery_challenges',
       'recovery_rate_limits',
+      'login_rate_limits',
       'auth_users',
     ]) {
       deleted[table] = Number((await db.prepare(`DELETE FROM ${table}`).run()).changes);
