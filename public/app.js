@@ -102,6 +102,10 @@ function showLogin() {
 
 $('#loginForm').onsubmit = async (e) => {
   e.preventDefault();
+  const submitButton = $('#loginForm').querySelector('button[type="submit"]');
+  submitButton.disabled = true;
+  submitButton.textContent = 'Signing in...';
+  $('#loginErr').textContent = '';
   try {
     const res = await fetch('/api/login', {
       method: 'POST',
@@ -138,6 +142,9 @@ $('#loginForm').onsubmit = async (e) => {
   } catch (err) {
     $('#loginErr').className = 'err';
     $('#loginErr').textContent = err.message;
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = 'Sign in';
   }
 };
 
@@ -304,14 +311,16 @@ async function boot() {
     return;
   }
   try {
-    settings = await api('/settings');
+    [settings] = await Promise.all([
+      api('/settings'),
+      refreshLookups(),
+    ]);
   } catch (err) {
     if (err.status === 403) logout();
     return;
   }
   $('#schoolName').textContent = settings.school_name;
   document.title = settings.school_name + ' - RFID Attendance';
-  await refreshLookups();
   showTab(currentTab);
   $('#login').classList.add('hidden');
   $('#userApp').classList.add('hidden');
@@ -417,7 +426,7 @@ function showTab(name, updateUrl = false) {
   document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   loaders[name]().then(clearLoadError).catch(showLoadError);
   if (name === 'overview') {
-    timer = setInterval(() => loadOverview().then(clearLoadError).catch(showLoadError), 3000);
+    timer = setInterval(() => loadOverview().then(clearLoadError).catch(showLoadError), 5000);
   }
 }
 document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
