@@ -23,13 +23,19 @@ const { sendAbsentNotices } = require('./notify');
 const PORT = process.env.PORT || 3000;
 const DEVICE_KEY = process.env.DEVICE_KEY || 'change-me-device-key';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
-const USER_USERNAME = process.env.USER_USERNAME || 'user';
+const ADMIN_USERNAME = process.env.ADMIN_EMAIL || process.env.ADMIN_USERNAME || 'admin@example.com';
+const USER_USERNAME = process.env.USER_EMAIL || process.env.USER_USERNAME || 'user@example.com';
 const USER_PASSWORD = process.env.USER_PASSWORD || 'user1234';
 
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
-  for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'USER_USERNAME', 'USER_PASSWORD', 'DEVICE_KEY', 'AUTH_SECRET']) {
+  for (const name of ['ADMIN_PASSWORD', 'USER_PASSWORD', 'DEVICE_KEY', 'AUTH_SECRET']) {
     if (!process.env[name]) throw new Error(`${name} must be configured for production deployments`);
+  }
+  if (!process.env.ADMIN_EMAIL && !process.env.ADMIN_USERNAME) {
+    throw new Error('ADMIN_EMAIL must be configured for production deployments');
+  }
+  if (!process.env.USER_EMAIL && !process.env.USER_USERNAME) {
+    throw new Error('USER_EMAIL must be configured for production deployments');
   }
 }
 if (!process.env.ADMIN_PASSWORD || !process.env.DEVICE_KEY) {
@@ -41,6 +47,17 @@ if (!process.env.USER_PASSWORD) {
 
 function passwordHash(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString('hex');
+}
+
+function isValidEmail(email) {
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+if (process.env.ADMIN_EMAIL && !isValidEmail(process.env.ADMIN_EMAIL.trim())) {
+  throw new Error('ADMIN_EMAIL must be a valid email address');
+}
+if (process.env.USER_EMAIL && !isValidEmail(process.env.USER_EMAIL.trim())) {
+  throw new Error('USER_EMAIL must be a valid email address');
 }
 
 async function initializeAccount(role, username, password) {
@@ -254,23 +271,23 @@ function loginRateLimit(req, res, next) {
 }
 
 app.post('/api/login', loginRateLimit, async (req, res) => {
-  const username = String(req.body.username || '').trim();
-  const account = await db.prepare('SELECT id,username,role,salt,password_hash FROM auth_users WHERE lower(username)=lower(?)').get(username);
+  const email = String(req.body.email ?? req.body.username ?? '').trim();
+  const account = await db.prepare('SELECT id,username,role,salt,password_hash FROM auth_users WHERE lower(username)=lower(?)').get(email);
   const given = passwordHash(String(req.body.password || ''), account ? account.salt : 'invalid-account-salt');
   const ok = account && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(account.password_hash));
-  if (!ok) return res.status(401).json({ error: 'Invalid username or password' });
+  if (!ok) return res.status(401).json({ error: 'Invalid email or password' });
   const token = signToken(account, req.body.remember_me === true);
   res.json({ token, role: account.role, username: account.username });
 });
 
 app.post('/api/admin/recovery/challenge', recoveryRateLimit, async (req, res) => {
-  const username = String(req.body.username || '').trim();
+  const email = String(req.body.email ?? req.body.username ?? '').trim();
   const account = await db.prepare('SELECT id FROM auth_users WHERE lower(username)=lower(?) AND role=?')
-    .get(username, 'admin');
+    .get(email, 'admin');
   const recovery = account && await db.prepare('SELECT question1,question2 FROM admin_recovery WHERE id=1').get();
   if (!recovery) {
     return res.status(400).json({
-      error: 'Recovery is unavailable. Check the username or contact your system administrator.',
+      error: 'Recovery is unavailable. Check the email address or contact your system administrator.',
     });
   }
 
@@ -289,7 +306,7 @@ app.post('/api/admin/recovery/challenge', recoveryRateLimit, async (req, res) =>
 });
 
 app.post('/api/admin/recovery/reset', recoveryRateLimit, async (req, res) => {
-  const username = String(req.body.username || '').trim();
+  const email = String(req.body.email ?? req.body.username ?? '').trim();
   const challenge = String(req.body.challenge || '');
   const question1 = String(req.body.question1 || '');
   const question2 = String(req.body.question2 || '');
@@ -316,7 +333,7 @@ app.post('/api/admin/recovery/reset', recoveryRateLimit, async (req, res) => {
     }
 
     const account = await db.prepare('SELECT id,username,role FROM auth_users WHERE lower(username)=lower(?) AND role=?')
-      .get(username, 'admin');
+      .get(email, 'admin');
     const recovery = await db.prepare('SELECT * FROM admin_recovery WHERE id=1').get();
     if (!account || !recovery ||
         recovery.question1 !== question1 || recovery.question2 !== question2) {
@@ -522,25 +539,25 @@ app.put('/api/account', async (req, res) => {
     return res.status(400).json({ error: 'Current password is incorrect' });
   }
 
-  const username = String(req.body.username || '').trim();
+  const email = String(req.body.email ?? req.body.username ?? '').trim().toLowerCase();
   const newPassword = String(req.body.new_password || '');
-  if (!/^[A-Za-z0-9._-]{3,32}$/.test(username)) {
-    return res.status(400).json({ error: 'Username must be 3-32 characters using letters, numbers, dot, underscore or hyphen' });
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: 'Enter a valid admin email address' });
   }
   if (newPassword.length < 8) {
     return res.status(400).json({ error: 'New password must be at least 8 characters' });
   }
 
-  const existing = await db.prepare('SELECT id FROM auth_users WHERE lower(username)=lower(?) AND id<>?').get(username, account.id);
-  if (existing) return res.status(409).json({ error: 'That username is already in use' });
+  const existing = await db.prepare('SELECT id FROM auth_users WHERE lower(username)=lower(?) AND id<>?').get(email, account.id);
+  if (existing) return res.status(409).json({ error: 'That email address is already in use' });
 
   const salt = crypto.randomBytes(16).toString('hex');
   const password_hash = passwordHash(newPassword, salt);
   await db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
-    .run(username, salt, password_hash, account.id);
+    .run(email, salt, password_hash, account.id);
 
-  const token = signToken({ id: account.id, role: 'admin', username, password_hash }, req.auth.rememberMe === true);
-  res.json({ token, username });
+  const token = signToken({ id: account.id, role: 'admin', username: email, password_hash }, req.auth.rememberMe === true);
+  res.json({ token, email, username: email });
 });
 
 app.put('/api/account/user-password', async (req, res) => {
@@ -573,11 +590,15 @@ app.put('/api/account/user-password', async (req, res) => {
 app.get('/api/accounts', async (req, res) => {
   const accounts = await db.prepare('SELECT role,username FROM auth_users WHERE role IN (?,?)')
     .all('admin', 'user');
-  const usernames = Object.fromEntries(accounts.map((account) => [`${account.role}_username`, account.username]));
-  if (!usernames.admin_username || !usernames.user_username) {
+  const emails = Object.fromEntries(accounts.map((account) => [`${account.role}_email`, account.username]));
+  if (!emails.admin_email || !emails.user_email) {
     return res.status(404).json({ error: 'Admin or user account not found' });
   }
-  res.json(usernames);
+  res.json({
+    ...emails,
+    admin_username: emails.admin_email,
+    user_username: emails.user_email,
+  });
 });
 
 app.put('/api/accounts', async (req, res) => {
@@ -591,17 +612,17 @@ app.put('/api/accounts', async (req, res) => {
     return res.status(400).json({ error: 'Current admin password is incorrect' });
   }
 
-  const adminUsername = String(req.body.admin_username || '').trim();
-  const userUsername = String(req.body.user_username || '').trim();
+  const adminEmail = String(req.body.admin_email ?? req.body.admin_username ?? '').trim().toLowerCase();
+  const userEmail = String(req.body.user_email ?? req.body.user_username ?? '').trim().toLowerCase();
   const adminNewPassword = String(req.body.admin_new_password || '');
   const userNewPassword = String(req.body.user_new_password || '');
-  for (const username of [adminUsername, userUsername]) {
-    if (!/^[A-Za-z0-9._-]{3,32}$/.test(username)) {
-      return res.status(400).json({ error: 'Usernames must be 3-32 characters using letters, numbers, dot, underscore or hyphen' });
+  for (const email of [adminEmail, userEmail]) {
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Enter valid email addresses for both accounts' });
     }
   }
-  if (adminUsername.toLowerCase() === userUsername.toLowerCase()) {
-    return res.status(400).json({ error: 'Admin and user usernames must be different' });
+  if (adminEmail === userEmail) {
+    return res.status(400).json({ error: 'Admin and user email addresses must be different' });
   }
   for (const password of [adminNewPassword, userNewPassword]) {
     if (password && password.length < 8) {
@@ -622,16 +643,22 @@ app.put('/api/accounts', async (req, res) => {
     await db.prepare('UPDATE auth_users SET username=? WHERE id=?').run(temporaryAdminUsername, admin.id);
     await db.prepare('UPDATE auth_users SET username=? WHERE id=?').run(temporaryUserUsername, user.id);
     await db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
-      .run(adminUsername, adminSalt, adminPasswordHash, admin.id);
+      .run(adminEmail, adminSalt, adminPasswordHash, admin.id);
     await db.prepare('UPDATE auth_users SET username=?,salt=?,password_hash=? WHERE id=?')
-      .run(userUsername, userSalt, userPasswordHash, user.id);
+      .run(userEmail, userSalt, userPasswordHash, user.id);
   });
 
   const token = signToken(
-    { id: admin.id, role: 'admin', username: adminUsername, password_hash: adminPasswordHash },
+    { id: admin.id, role: 'admin', username: adminEmail, password_hash: adminPasswordHash },
     req.auth.rememberMe === true
   );
-  res.json({ token, admin_username: adminUsername, user_username: userUsername });
+  res.json({
+    token,
+    admin_email: adminEmail,
+    user_email: userEmail,
+    admin_username: adminEmail,
+    user_username: userEmail,
+  });
 });
 
 app.delete('/api/data', async (req, res) => {

@@ -3,9 +3,9 @@ const test = require('node:test');
 
 process.env.DB_FILE = ':memory:';
 process.env.NODE_ENV = 'production';
-process.env.ADMIN_USERNAME = 'test-admin';
+process.env.ADMIN_EMAIL = 'test-admin@example.com';
 process.env.ADMIN_PASSWORD = 'test-admin-password';
-process.env.USER_USERNAME = 'test-user';
+process.env.USER_EMAIL = 'test-user@example.com';
 process.env.USER_PASSWORD = 'test-user-password';
 process.env.DEVICE_KEY = 'test-device-key';
 process.env.AUTH_SECRET = 'test-auth-secret-with-enough-entropy-for-tests';
@@ -18,11 +18,11 @@ test('security headers, role-based access, and login rate limit', async () => {
   await new Promise((resolve) => server.once('listening', resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const request = (path, options) => fetch(new URL(path, baseUrl), options);
-  const login = async (username, password, rememberMe = false) => {
+  const login = async (email, password, rememberMe = false) => {
     const response = await request('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, remember_me: rememberMe }),
+      body: JSON.stringify({ email, password, remember_me: rememberMe }),
     });
     return { response, body: await response.json() };
   };
@@ -40,7 +40,7 @@ test('security headers, role-based access, and login rate limit', async () => {
     }
     assert.equal((await request('/missing-page')).status, 404);
 
-    const admin = await login('test-admin', 'test-admin-password');
+    const admin = await login('TEST-ADMIN@example.com', 'test-admin-password');
     assert.equal(admin.response.status, 200);
     assert.equal(admin.response.headers.get('cache-control'), 'no-store');
     const adminClaims = JSON.parse(Buffer.from(admin.body.token.split('.')[0], 'base64url').toString());
@@ -48,7 +48,7 @@ test('security headers, role-based access, and login rate limit', async () => {
     assert.ok(adminClaims.expiresAt - Date.now() > 11 * 3600 * 1000);
     assert.ok(adminClaims.expiresAt - Date.now() <= 12 * 3600 * 1000);
 
-    const user = await login('test-user', 'test-user-password', true);
+    const user = await login('test-user@example.com', 'test-user-password', true);
     assert.equal(user.response.status, 200);
     const userClaims = JSON.parse(Buffer.from(user.body.token.split('.')[0], 'base64url').toString());
     assert.equal(userClaims.rememberMe, true);
@@ -129,6 +129,33 @@ test('security headers, role-based access, and login rate limit', async () => {
     assert.equal(unknownApi.status, 404);
     assert.deepEqual(await unknownApi.json(), { error: 'API endpoint not found' });
 
+    const invalidAccountEmails = await request('/api/accounts', {
+      method: 'PUT',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        current_admin_password: 'test-admin-password',
+        admin_email: 'not-an-email',
+        user_email: 'staff@example.com',
+      }),
+    });
+    assert.equal(invalidAccountEmails.status, 400);
+
+    const accountEmails = await request('/api/accounts', {
+      method: 'PUT',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        current_admin_password: 'test-admin-password',
+        admin_email: 'principal@school.example',
+        user_email: 'staff@school.example',
+      }),
+    });
+    assert.equal(accountEmails.status, 200);
+    const updatedEmails = await accountEmails.json();
+    assert.equal(updatedEmails.admin_email, 'principal@school.example');
+    assert.equal(updatedEmails.user_email, 'staff@school.example');
+    assert.equal((await login('principal@school.example', 'test-admin-password')).response.status, 200);
+    assert.equal((await login('staff@school.example', 'test-user-password')).response.status, 200);
+
     const malformedJson = await request('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -137,11 +164,11 @@ test('security headers, role-based access, and login rate limit', async () => {
     assert.equal(malformedJson.status, 400);
     assert.deepEqual(await malformedJson.json(), { error: 'Invalid JSON request' });
 
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const invalid = await login('test-admin', 'incorrect-password');
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const invalid = await login('principal@school.example', 'incorrect-password');
       assert.equal(invalid.response.status, 401);
     }
-    const limited = await login('test-admin', 'incorrect-password');
+    const limited = await login('principal@school.example', 'incorrect-password');
     assert.equal(limited.response.status, 429);
     assert.equal(limited.response.headers.get('ratelimit-limit'), '10');
     assert.equal(limited.response.headers.get('ratelimit-remaining'), '0');

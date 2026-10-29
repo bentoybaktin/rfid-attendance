@@ -16,7 +16,7 @@ npm run seed        # demo school: 30 students, ~45 days of history
 npm start           # http://localhost:3000
 ```
 
-Sign in as admin (default username `admin`, password `admin123`) or as user (default username `user`, password `user1234`). Change the default credentials before real use. Admins can add, edit, and remove students and manage settings. The user account can add students to sections created by the admin, but cannot view, edit, or remove student records; duplicate names, LRN values, or RFID cards must be resolved by the admin. Users also see the latest recognized card tap or scan feedback, along with student details when the card is registered. Set the four class times in **Settings** before scanning or using **Test without hardware**. Open "Early warning" to see the demo students who were seeded with worrying patterns.
+Sign in with the admin email (default `admin@example.com`, password `admin123`) or user email (default `user@example.com`, password `user1234`). Change the default credentials before real use. Admins can add, edit, and remove students and manage settings. The user account can add students to sections created by the admin, but cannot view, edit, or remove student records; duplicate names, LRN values, or RFID cards must be resolved by the admin. Users also see the latest recognized card tap or scan feedback, along with student details when the card is registered. Set the four class times in **Settings** before scanning or using **Test without hardware**. Open "Early warning" to see the demo students who were seeded with worrying patterns.
 
 Admins can open a student's shareable detail URL by selecting their name in **Students**. These `/students/<id>` links require an authenticated admin account.
 
@@ -29,10 +29,10 @@ Dashboard overview refreshes every 15 seconds, and the user scan screen polls ev
 Run with your own secrets:
 
 ```bash
-ADMIN_USERNAME=principal ADMIN_PASSWORD=mypassword USER_USERNAME=staff USER_PASSWORD=anotherpassword DEVICE_KEY=longrandomkey npm start
+ADMIN_EMAIL=principal@school.example ADMIN_PASSWORD=mypassword USER_EMAIL=staff@school.example USER_PASSWORD=anotherpassword DEVICE_KEY=longrandomkey npm start
 ```
 
-New databases get admin and user accounts from these environment variables. Admins can later change their own username and password in **Settings**; those changes are stored as salted password hashes in the database and are not reset from environment variables on restart. The user account credentials are set through `USER_USERNAME` and `USER_PASSWORD`.
+New databases get admin and user accounts from `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `USER_EMAIL`, and `USER_PASSWORD`. Existing deployments can keep using `ADMIN_USERNAME` and `USER_USERNAME` during migration; their current sign-in identifiers remain accepted until the admin signs in and updates both email addresses in **Settings → Account**. Email addresses and password hashes are stored in the database and are not reset from environment variables on restart. Clearing all data recreates accounts from the configured environment variables.
 
 Requires Node 22.13 or newer (check with `node -v`). Local development uses Node's built-in SQLite. If you see an "ExperimentalWarning: SQLite" message when the server starts, it is harmless.
 
@@ -46,7 +46,7 @@ Vercel runs the Node.js app as a serverless function. Use Neon Postgres for pers
 4. Add these environment variables in Vercel's project settings (Production and Preview as needed):
    - `DATABASE_URL`: the Neon pooled connection string.
    - `AUTH_SECRET`: a long random secret, generated locally with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Keep it stable between deployments.
-   - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `USER_USERNAME`, `USER_PASSWORD`, and `DEVICE_KEY`: use strong, unique values.
+   - `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `USER_EMAIL`, `USER_PASSWORD`, and `DEVICE_KEY`: use valid email addresses and strong, unique passwords and keys. Existing deployments may use `ADMIN_USERNAME` and `USER_USERNAME` until their account emails are updated in Settings.
    - SMS gateway variables only if using a real phone gateway.
    - `RESEND_API_KEY` and `EMAIL_FROM` to enable parent email notifications. Create a Resend account, verify a sending domain, create an API key, and set `EMAIL_FROM` to an address on that verified domain (for example, `Attendance <attendance@school.example>`).
 5. Deploy. On its first request, the app creates the Neon schema and configured accounts. The dashboard is served from `public/`, and `/api/*` is routed to the Express function.
@@ -74,7 +74,7 @@ The app sends email through Resend's API; it does not store provider credentials
 - The bulk `GET /api/students` roster omits LRN, RFID UID, guardian name, and phone; it returns only boolean indicators for assigned cards and SMS eligibility. User accounts cannot read the roster or reports. Admin-only student detail/edit, attendance, and explicit CSV export features can still return LRN or other information needed for those tasks. Any information delivered to an authorized browser is visible in its Network tools; authorization and minimizing returned fields limit exposure, but do not make client-received data secret.
 - Admins can configure two password-recovery questions in **Settings → Account**. Answers are normalized and stored as independently salted password hashes. Recovery requires both answers, uses a single-use 10-minute challenge, resets the admin password to a minimum of 12 characters, and is limited to five combined challenge/reset attempts per IP per 15 minutes using the database. Security-question answers may be guessable or discoverable; choose private answers and use a strong, unique password.
 - API requests are limited to 3,000 per IP per 15 minutes and RFID device requests to 120 per IP per minute using `express-rate-limit`. Sign-in requests are limited to 10 per IP per 15 minutes using database-backed counters, shared across server instances, with standard `RateLimit-*` response headers. General API/device limits use the default in-memory store; configure a shared store for those limits when deploying multiple instances. Password-recovery attempts are limited separately using the database.
-- JSON request bodies are limited to 64 KB. Production deployments must provide `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `USER_USERNAME`, `USER_PASSWORD`, `DEVICE_KEY`, and a stable random `AUTH_SECRET`.
+- JSON request bodies are limited to 64 KB. Production deployments must provide `ADMIN_EMAIL` (or legacy `ADMIN_USERNAME`), `ADMIN_PASSWORD`, `USER_EMAIL` (or legacy `USER_USERNAME`), `USER_PASSWORD`, `DEVICE_KEY`, and a stable random `AUTH_SECRET`.
 - Vercel provides managed HTTPS for deployed domains; the app sends HSTS and Vercel redirects/serves deployments over HTTPS. Certificate grade and hostname coverage must still be verified against the actual deployed domain with an external TLS scanner; they cannot be established from the source code alone.
 
 ## Using it for real

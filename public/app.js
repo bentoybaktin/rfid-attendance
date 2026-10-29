@@ -127,7 +127,7 @@ $('#loginForm').onsubmit = async (e) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        username: $('#username').value,
+        email: $('#email').value.trim(),
         password: $('#pw').value,
         remember_me: $('#rememberMe').checked,
       }),
@@ -149,7 +149,7 @@ $('#loginForm').onsubmit = async (e) => {
     otherStorage.removeItem('username');
     if (rememberMe) localStorage.setItem('rememberMe', 'true');
     else localStorage.removeItem('rememberMe');
-    $('#username').value = '';
+    $('#email').value = '';
     $('#pw').value = '';
     hidePasswordFields($('#loginForm'));
     $('#loginErr').textContent = '';
@@ -172,11 +172,11 @@ $('#openForgotPassword').onclick = () => {
   $('#recoveryResetForm').reset();
   $('#recoveryResetForm').classList.add('hidden');
   $('#recoveryLookupForm').classList.remove('hidden');
-  $('#recoveryUsername').value = $('#username').value;
+  $('#recoveryEmail').value = $('#email').value;
   $('#recoveryMsg').textContent = '';
   $('#loginForm').classList.add('hidden');
   $('#adminRecovery').classList.remove('hidden');
-  $('#recoveryUsername').focus();
+  $('#recoveryEmail').focus();
 };
 
 $('#backToLogin').onclick = () => {
@@ -187,7 +187,7 @@ $('#backToLogin').onclick = () => {
   $('#recoveryLookupForm').classList.remove('hidden');
   $('#recoveryResetForm').classList.add('hidden');
   $('#recoveryMsg').textContent = '';
-  $('#username').focus();
+  $('#email').focus();
 };
 
 $('#recoveryLookupForm').onsubmit = async (event) => {
@@ -200,7 +200,7 @@ $('#recoveryLookupForm').onsubmit = async (event) => {
     const response = await fetch('/api/admin/recovery/challenge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: $('#recoveryUsername').value.trim() }),
+      body: JSON.stringify({ email: $('#recoveryEmail').value.trim() }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not start password recovery');
@@ -231,7 +231,7 @@ $('#recoveryResetForm').onsubmit = async (event) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        username: $('#recoveryUsername').value.trim(),
+        email: $('#recoveryEmail').value.trim(),
         challenge: recoveryChallenge,
         question1: recoveryQuestionIds[0],
         answer1: $('#recoveryAnswer1').value,
@@ -242,9 +242,9 @@ $('#recoveryResetForm').onsubmit = async (event) => {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Password reset failed');
-    const recoveredUsername = $('#recoveryUsername').value.trim();
+    const recoveredEmail = $('#recoveryEmail').value.trim();
     $('#backToLogin').click();
-    $('#username').value = recoveredUsername;
+    $('#email').value = recoveredEmail;
     $('#loginErr').className = 'muted';
     $('#loginErr').textContent = 'Password reset. Sign in with your new password.';
   } catch (error) {
@@ -1180,8 +1180,8 @@ $('#openAccountModal').onclick = async () => {
       api('/accounts'),
       api('/admin/recovery'),
     ]);
-    $('#adminUsername').value = accounts.admin_username;
-    $('#userUsername').value = accounts.user_username;
+    $('#adminEmail').value = accounts.admin_email;
+    $('#userEmail').value = accounts.user_email;
     $('#currentAdminPassword').value = '';
     $('#adminNewPassword').value = '';
     $('#userNewPassword').value = '';
@@ -1313,19 +1313,19 @@ $('#accountForm').onsubmit = async (e) => {
       method: 'PUT',
       body: {
         current_admin_password: $('#currentAdminPassword').value,
-        admin_username: $('#adminUsername').value,
+        admin_email: $('#adminEmail').value,
         admin_new_password: $('#adminNewPassword').value,
-        user_username: $('#userUsername').value,
+        user_email: $('#userEmail').value,
         user_new_password: $('#userNewPassword').value,
       },
     });
     token = result.token;
-    username = result.admin_username;
+    username = result.admin_email;
     const storage = authStorage();
     storage.setItem('token', token);
     storage.setItem('username', username);
-    $('#adminUsername').value = result.admin_username;
-    $('#userUsername').value = result.user_username;
+    $('#adminEmail').value = result.admin_email;
+    $('#userEmail').value = result.user_email;
     $('#currentAdminPassword').value = '';
     $('#adminNewPassword').value = '';
     $('#userNewPassword').value = '';

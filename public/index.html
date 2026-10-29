@@ -4,15 +4,27 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RFID Attendance</title>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
 <div id="login" class="login hidden">
+  <aside class="login-welcome">
+    <p class="login-welcome-school">Tampilisan National High School</p>
+    <h2>Every school day,<br>all in one place.</h2>
+    <p class="login-welcome-copy">A simple, reliable way to keep your school community connected and attendance up to date.</p>
+    <div class="login-welcome-note"><span aria-hidden="true"></span> RFID attendance portal</div>
+  </aside>
   <form id="loginForm" class="panel login-box">
-    <h1>RFID Attendance</h1>
+    <div class="login-brand">
+      <img src="/assets/timpilan-national-high-school-seal.png" alt="Tampilisan National High School seal">
+      <div class="login-brand-copy">
+        <p>Tampilisan National High School</p>
+        <h1>RFID Attendance</h1>
+      </div>
+    </div>
     <p class="muted">Log In</p>
-    <input id="username" placeholder="Username" autocomplete="username" required>
+    <input id="email" type="text" inputmode="email" maxlength="254" placeholder="Email address" aria-label="Email address" autocomplete="email" required>
     <div class="password-field">
       <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
       <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
@@ -38,12 +50,12 @@
   </form>
 </div>
 
-<div id="adminRecovery" class="login hidden">
+<div id="adminRecovery" class="login login-recovery hidden">
   <section class="panel login-box" aria-labelledby="recoveryTitle">
     <h1 id="recoveryTitle">Reset admin password</h1>
     <p class="muted">Answer the recovery questions configured by the admin.</p>
     <form id="recoveryLookupForm" class="form">
-      <label>Admin username <input id="recoveryUsername" autocomplete="username" required></label>
+      <label>Admin email address <input id="recoveryEmail" type="text" inputmode="email" maxlength="254" autocomplete="email" required></label>
       <button type="submit">Continue</button>
     </form>
     <form id="recoveryResetForm" class="form hidden">
@@ -67,7 +79,10 @@
 
 <div id="userApp" class="user-app hidden">
   <header>
-    <h1 id="userSchoolName">School</h1>
+    <div class="school-brand">
+      <img src="/assets/timpilan-national-high-school-seal.png" alt="">
+      <h1 id="userSchoolName">School</h1>
+    </div>
     <button id="userNavToggle" class="ghost" type="button" aria-expanded="false" aria-controls="userNav" aria-label="Open navigation">
       <span></span><span></span><span></span>
     </button>
@@ -89,7 +104,7 @@
             </span>
             <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
-            </svg>
+            </svg>np
           </span>
         </label>
         <p id="userThemeMsg" class="muted" role="status">Theme choice is saved in this browser.</p>
@@ -115,7 +130,10 @@
 
 <div id="app" class="hidden">
   <header>
-    <h1 id="schoolName">School</h1>
+    <div class="school-brand">
+      <img src="/assets/timpilan-national-high-school-seal.png" alt="">
+      <h1 id="schoolName">School</h1>
+    </div>
     <button id="navToggle" class="ghost" type="button" aria-expanded="false" aria-controls="tabs" aria-label="Open navigation">
       <span></span><span></span><span></span>
     </button>
@@ -382,7 +400,7 @@
         </label>
         <fieldset class="account-credentials">
           <legend>Admin account</legend>
-          <label>Admin username <input id="adminUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
+          <label>Admin email address <input id="adminEmail" type="email" required maxlength="254" autocomplete="email"></label>
           <label>New admin password
             <span class="password-field">
               <input id="adminNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password">
@@ -403,7 +421,7 @@
         </fieldset>
         <fieldset class="account-credentials">
           <legend>User account</legend>
-          <label>User username <input id="userUsername" required minlength="3" maxlength="32" pattern="[A-Za-z0-9._-]+"></label>
+          <label>User email address <input id="userEmail" type="email" required maxlength="254" autocomplete="email"></label>
           <label>New user password
             <span class="password-field">
               <input id="userNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password">
@@ -517,6 +535,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="/app.js"></script>
 </body>
 </html>
