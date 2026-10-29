@@ -1161,6 +1161,15 @@ function updateThemeControl(darkModeEnabled) {
 
 updateThemeControl(document.documentElement.dataset.theme === 'dark');
 
+let accountToastTimer;
+function showAccountToast(message) {
+  const toast = $('#accountToast');
+  clearTimeout(accountToastTimer);
+  toast.textContent = message;
+  toast.classList.add('visible');
+  accountToastTimer = setTimeout(() => toast.classList.remove('visible'), 3500);
+}
+
 function closeAccountModal() {
   hidePasswordFields($('#accountModal'));
   $('#recoverySettingsAnswer1').value = '';
@@ -1231,6 +1240,8 @@ async function saveRecoverySettings(remove = false) {
     message.textContent = result.configured
       ? 'Password recovery questions saved.'
       : 'Password recovery questions removed.';
+    closeAccountModal();
+    showAccountToast(message.textContent);
   } catch (error) {
     message.className = 'err';
     message.textContent = error.message;
@@ -1329,7 +1340,8 @@ $('#accountForm').onsubmit = async (e) => {
     $('#currentAdminPassword').value = '';
     $('#adminNewPassword').value = '';
     $('#userNewPassword').value = '';
-    message.textContent = 'Account changes saved.';
+    closeAccountModal();
+    showAccountToast('Account changes saved.');
   } catch (err) {
     message.className = 'err';
     message.textContent = err.message;

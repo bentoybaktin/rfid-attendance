@@ -171,8 +171,37 @@
   <main>
     <p id="loadError" class="err hidden" role="alert"></p>
     <div id="tabLoading" class="tab-loading hidden" role="status" aria-live="polite">
-      <span class="tab-loading-spinner" aria-hidden="true"></span>
-      <span id="tabLoadingMessage">Loading...</span>
+      <span id="tabLoadingMessage" class="visually-hidden">Loading...</span>
+      <div class="loading-skeleton" aria-hidden="true">
+        <div class="skeleton-cards">
+          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+        </div>
+        <div class="skeleton-content-grid">
+          <div class="skeleton-panel skeleton-panel-large">
+            <span class="skeleton-block skeleton-heading"></span>
+            <span class="skeleton-block skeleton-row"></span>
+            <span class="skeleton-block skeleton-row"></span>
+            <span class="skeleton-block skeleton-row"></span>
+            <span class="skeleton-block skeleton-row"></span>
+            <span class="skeleton-block skeleton-row"></span>
+          </div>
+          <div class="skeleton-sidebar">
+            <div class="skeleton-panel">
+              <span class="skeleton-block skeleton-heading"></span>
+              <span class="skeleton-block skeleton-row"></span>
+              <span class="skeleton-block skeleton-row"></span>
+              <span class="skeleton-block skeleton-row"></span>
+            </div>
+            <div class="skeleton-panel skeleton-panel-short">
+              <span class="skeleton-block skeleton-heading"></span>
+              <span class="skeleton-block skeleton-row"></span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
     <!-- Overview -->
     <section id="tab-overview" class="tab">
@@ -373,6 +402,7 @@
       </div>
     </section>
   </main>
+  <div id="accountToast" class="account-toast" role="status" aria-live="polite"></div>
   <div id="accountModal" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
     <section class="panel student-modal-panel account-modal-panel">
       <div class="row">
