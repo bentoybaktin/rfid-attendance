@@ -45,6 +45,17 @@ let studentMarkMode = false;
 let timer = null;
 let userTimer = null;
 let userHideTimer = null;
+let userHidScanTimer = null;
+let userHidScanInProgress = false;
+let userHidScanBuffer = '';
+let studentHidScanTimer = null;
+let studentHidScanBuffer = '';
+let studentHidScanLastKeyAt = 0;
+let studentHidScanCapturing = false;
+let studentHidScanTarget = null;
+let studentHidScanOriginalValue = '';
+let studentHidScanSelectionStart = 0;
+let studentHidScanSelectionEnd = 0;
 let cardWatchTimer = null;
 let cardWatchInProgress = false;
 let lastUserScanId = 0;
@@ -310,6 +321,153 @@ $('#userNavBackdrop').onclick = () => {
   $('#userNavToggle').setAttribute('aria-label', 'Open navigation');
 };
 
+async function submitUserHidScan(rawUid) {
+  const uid = rawUid.replace(/[^0-9a-f]/gi, '').toUpperCase();
+  if (!/^(?:[0-9A-F]{8}|[0-9A-F]{10}|[0-9A-F]{12}|[0-9A-F]{14}|[0-9A-F]{16}|[0-9A-F]{18}|[0-9A-F]{20})$/.test(uid)) {
+    $('#userStatus').textContent = 'Could not read a valid card UID. Tap the card again.';
+    return;
+  }
+  if (userHidScanInProgress) return;
+  clearTimeout(userHidScanTimer);
+  userHidScanInProgress = true;
+  $('#userStatus').textContent = 'Submitting card scan...';
+  try {
+    await api('/user/tap', { method: 'POST', body: { uid } });
+  } catch (error) {
+    $('#userStatus').textContent = error.message;
+  } finally {
+    userHidScanInProgress = false;
+  }
+}
+
+function finishUserHidScan() {
+  clearTimeout(userHidScanTimer);
+  const uid = userHidScanBuffer;
+  userHidScanBuffer = '';
+  if (uid) submitUserHidScan(uid);
+}
+
+function restoreStudentHidScanTarget() {
+  const target = studentHidScanTarget;
+  if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) return;
+  target.value = studentHidScanOriginalValue;
+  if (studentHidScanTarget.selectionStart !== null) {
+    target.setSelectionRange(studentHidScanSelectionStart, studentHidScanSelectionEnd);
+  }
+}
+
+function finishStudentHidScan() {
+  clearTimeout(studentHidScanTimer);
+  if (studentHidScanCapturing) {
+    const uid = studentHidScanBuffer.replace(/[^0-9a-f]/gi, '').toUpperCase();
+    if (/^(?:[0-9A-F]{8}|[0-9A-F]{10}|[0-9A-F]{12}|[0-9A-F]{14}|[0-9A-F]{16}|[0-9A-F]{18}|[0-9A-F]{20})$/.test(uid)) {
+      $('#sfUid').value = uid;
+    } else {
+      const target = studentHidScanTarget;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        const start = studentHidScanSelectionStart;
+        const end = studentHidScanSelectionEnd;
+        target.value = studentHidScanOriginalValue.slice(0, start) +
+          studentHidScanBuffer +
+          studentHidScanOriginalValue.slice(end);
+        const cursor = start + studentHidScanBuffer.length;
+        if (target.selectionStart !== null) target.setSelectionRange(cursor, cursor);
+      }
+    }
+  }
+  studentHidScanBuffer = '';
+  studentHidScanLastKeyAt = 0;
+  studentHidScanCapturing = false;
+  studentHidScanTarget = null;
+}
+
+function beginStudentHidScanCandidate(event, now) {
+  studentHidScanBuffer = event.key;
+  studentHidScanLastKeyAt = now;
+  studentHidScanCapturing = false;
+  studentHidScanTarget = event.target instanceof HTMLInputElement ||
+    event.target instanceof HTMLTextAreaElement ? event.target : null;
+  studentHidScanOriginalValue = studentHidScanTarget ? studentHidScanTarget.value : '';
+  studentHidScanSelectionStart = studentHidScanTarget?.selectionStart ?? 0;
+  studentHidScanSelectionEnd = studentHidScanTarget?.selectionEnd ?? 0;
+  clearTimeout(studentHidScanTimer);
+  studentHidScanTimer = setTimeout(finishStudentHidScan, 150);
+}
+
+function captureStudentHidScanKey(event) {
+  const now = Date.now();
+  if (event.ctrlKey || event.altKey || event.metaKey) {
+    finishStudentHidScan();
+    return;
+  }
+  if (event.key === 'Enter' || event.key === 'Tab') {
+    if (studentHidScanCapturing) {
+      event.preventDefault();
+      finishStudentHidScan();
+    } else {
+      finishStudentHidScan();
+    }
+    return;
+  }
+  if (!/^[0-9a-f]$/i.test(event.key)) {
+    finishStudentHidScan();
+    return;
+  }
+
+  if (studentHidScanBuffer && now - studentHidScanLastKeyAt > 80) {
+    finishStudentHidScan();
+  }
+  if (!studentHidScanBuffer) {
+    beginStudentHidScanCandidate(event, now);
+    return;
+  }
+
+  if (!studentHidScanCapturing) {
+    studentHidScanCapturing = true;
+    restoreStudentHidScanTarget();
+  }
+  event.preventDefault();
+  studentHidScanBuffer += event.key;
+  studentHidScanLastKeyAt = now;
+  clearTimeout(studentHidScanTimer);
+  studentHidScanTimer = setTimeout(finishStudentHidScan, 150);
+}
+
+document.addEventListener('keydown', (event) => {
+  if (role !== 'user' || $('#userApp').classList.contains('hidden')) return;
+  if (!$('#stuFormPanel').classList.contains('hidden') && userAddMode) {
+    captureStudentHidScanKey(event);
+    return;
+  }
+  if (!$('#stuFormPanel').classList.contains('hidden') ||
+      event.ctrlKey || event.altKey || event.metaKey) return;
+
+  const target = event.target;
+  if (target instanceof HTMLElement &&
+      (target.matches('input, textarea, select') || target.isContentEditable)) {
+    clearTimeout(userHidScanTimer);
+    userHidScanBuffer = '';
+    return;
+  }
+
+  if (event.key === 'Enter' || event.key === 'Tab') {
+    if (userHidScanBuffer) {
+      event.preventDefault();
+      finishUserHidScan();
+    }
+    return;
+  }
+  if (/^[0-9a-f]$/i.test(event.key)) {
+    userHidScanBuffer += event.key;
+    clearTimeout(userHidScanTimer);
+    userHidScanTimer = setTimeout(finishUserHidScan, 250);
+  } else if (!['Shift', 'CapsLock', 'Control', 'Alt', 'Meta'].includes(event.key) &&
+      !/^[\s:-]$/.test(event.key)) {
+    clearTimeout(userHidScanTimer);
+    userHidScanBuffer = '';
+  }
+});
+
 async function boot() {
   if (!token) return showLogin();
   if (role === 'user') {
@@ -360,6 +518,13 @@ async function pollUserScreen() {
   if (student.code) {
     $('#userStudentDetails').classList.add('hidden');
     $('#userStatus').textContent = student.message;
+    if (student.code === 'UNKNOWN_CARD' && !userAddMode && $('#stuFormPanel').classList.contains('hidden')) {
+      $('#userStatus').textContent = 'Unregistered card detected. Opening student enrollment...';
+      openUserStudentForm(student.uid).catch((error) => {
+        $('#userStatus').textContent = `Could not open student enrollment: ${error.message}`;
+      });
+      return;
+    }
     clearTimeout(userHideTimer);
     userHideTimer = setTimeout(hideUserStudent, 10000);
     return;
@@ -384,7 +549,7 @@ async function pollUserScreen() {
 
 function hideUserStudent() {
   $('#userStudentDetails').classList.add('hidden');
-  $('#userStatus').textContent = 'Waiting for an NFC card tap...';
+  $('#userStatus').textContent = 'Waiting for a card tap...';
 }
 
 function scheduleUserPoll() {
@@ -434,6 +599,73 @@ const loaders = {
   notifications: loadNotifications,
   settings: loadSettings,
 };
+const skeletonRows = (count = 6) => Array.from(
+  { length: count },
+  () => '<span class="skeleton-block skeleton-row"></span>'
+).join('');
+const skeletonHeading = '<span class="skeleton-block skeleton-heading"></span>';
+const skeletonLayouts = {
+  overview: `
+    <div class="skeleton-cards">${Array.from({ length: 4 }, () => `
+      <div class="skeleton-card">
+        <span class="skeleton-block skeleton-label"></span>
+        <span class="skeleton-block skeleton-value"></span>
+      </div>`).join('')}
+    </div>
+    <div class="skeleton-content-grid">
+      <div class="skeleton-panel skeleton-panel-large">${skeletonHeading}${skeletonRows(5)}</div>
+      <div class="skeleton-sidebar">
+        <div class="skeleton-panel">${skeletonHeading}${skeletonRows(3)}</div>
+        <div class="skeleton-panel skeleton-panel-short">${skeletonHeading}${skeletonRows(1)}</div>
+      </div>
+    </div>`,
+  attendance: `
+    <div class="skeleton-toolbar">
+      <span class="skeleton-block skeleton-heading"></span>
+      <span class="skeleton-block skeleton-control"></span>
+    </div>
+    <div class="skeleton-panel skeleton-table">${skeletonRows(9)}</div>`,
+  students: `
+    <div class="skeleton-toolbar">
+      <span class="skeleton-block skeleton-heading"></span>
+      <span class="skeleton-block skeleton-control"></span>
+      <span class="skeleton-block skeleton-control"></span>
+    </div>
+    <div class="skeleton-panel skeleton-table">${skeletonRows(8)}</div>`,
+  risk: `
+    <div class="skeleton-toolbar">
+      <span class="skeleton-block skeleton-heading"></span>
+      <span class="skeleton-block skeleton-control"></span>
+    </div>
+    <div class="skeleton-cards">${Array.from({ length: 3 }, () => `
+      <div class="skeleton-card">
+        <span class="skeleton-block skeleton-label"></span>
+        <span class="skeleton-block skeleton-value"></span>
+      </div>`).join('')}
+    </div>
+    <div class="skeleton-panel skeleton-table">${skeletonRows(7)}</div>`,
+  notifications: `
+    <div class="skeleton-toolbar">
+      <span class="skeleton-block skeleton-heading"></span>
+      <span class="skeleton-block skeleton-control"></span>
+    </div>
+    <div class="skeleton-panel skeleton-table">${skeletonRows(8)}</div>`,
+  settings: `
+    <div class="skeleton-toolbar">
+      <span class="skeleton-block skeleton-heading"></span>
+    </div>
+    <div class="skeleton-settings-grid">
+      <div class="skeleton-panel">${skeletonHeading}${skeletonRows(5)}</div>
+      <div class="skeleton-panel">${skeletonHeading}${skeletonRows(5)}</div>
+      <div class="skeleton-panel">${skeletonHeading}${skeletonRows(4)}</div>
+      <div class="skeleton-panel">${skeletonHeading}${skeletonRows(4)}</div>
+    </div>`,
+};
+function showTabSkeleton(name) {
+  const skeleton = $('#loadingSkeleton');
+  skeleton.dataset.tab = name;
+  skeleton.innerHTML = skeletonLayouts[name];
+}
 let tabLoadId = 0;
 
 function scheduleOverviewRefresh() {
@@ -469,6 +701,7 @@ function showTab(name, updateUrl = false) {
   document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   const loadId = ++tabLoadId;
   const tabName = document.querySelector(`#tabs [data-tab="${name}"]`)?.textContent.trim() || 'page';
+  showTabSkeleton(name);
   $('#tabLoadingMessage').textContent = `Loading ${tabName}...`;
   $('#tabLoading').classList.remove('hidden');
   $('#app > main').setAttribute('aria-busy', 'true');
@@ -912,7 +1145,7 @@ function showStudentForm() {
   $('#sfSurname').focus();
 }
 
-async function openUserStudentForm() {
+async function openUserStudentForm(rfidUid = '') {
   userAddMode = true;
   clearForm();
   userAddMode = true;
@@ -924,6 +1157,11 @@ async function openUserStudentForm() {
   $('#sfHelp').textContent = 'Choose a section already created by the admin. Existing student names and RFID cards cannot be changed here; contact the admin for updates.';
   $('#sfHelp').classList.remove('hidden');
   $('#unknownBox').classList.add('hidden');
+  $('#sfUid').value = rfidUid;
+  if (rfidUid) {
+    $('#sfMsg').className = 'muted';
+    $('#sfMsg').textContent = `Unregistered RFID card ${rfidUid} detected. Complete the form to enroll this student.`;
+  }
   $('#stuFormPanel').classList.remove('hidden');
   document.body.classList.add('modal-open');
   $('#sfSurname').focus();
@@ -997,6 +1235,7 @@ async function editStudent(id) {
   $('#sfConsent').checked = !!details.consent;
   $('#sfEmail').value = details.parent_email || '';
   $('#sfEmailConsent').checked = !!details.email_consent;
+  $('#sfMsg').className = 'err';
   $('#sfMsg').textContent = '';
 }
 
@@ -1010,6 +1249,7 @@ function clearForm() {
   $('#unknownBox').classList.remove('hidden');
   $('#stuForm').reset();
   $('#sfId').value = '';
+  $('#sfMsg').className = 'err';
   $('#sfMsg').textContent = '';
   $('#stuFormPanel').classList.add('hidden');
   document.body.classList.remove('modal-open');
@@ -1063,7 +1303,12 @@ $('#stuForm').onsubmit = async (e) => {
     clearForm();
     loadStudents();
   } catch (err) {
+    $('#sfMsg').className = 'err';
     $('#sfMsg').textContent = err.message;
+    $('#sfMsg').classList.toggle(
+      'student-enrollment-error',
+      userAddMode && err.status === 409 && /already enrolled/i.test(err.message)
+    );
   }
 };
 
@@ -1349,7 +1594,7 @@ $('#accountForm').onsubmit = async (e) => {
 };
 
 $('#clearAllData').onclick = async () => {
-  if (!confirm('This permanently erases all saved records, previous account credentials, and settings from the database. Admin/user accounts will be recreated using configured credentials and settings will return to defaults. This cannot be undone. Continue?')) return;
+  if (!confirm('This permanently erases all saved records, including notification logs, previous account credentials, and settings from the database. Admin/user accounts will be recreated using configured credentials and settings will return to defaults. This cannot be undone. Continue?')) return;
   if (prompt('Type DELETE ALL to confirm permanently erasing all saved data.') !== 'DELETE ALL') {
     $('#clearAllDataMsg').textContent = 'Data clearing cancelled.';
     return;
@@ -1380,7 +1625,8 @@ $('#clearAllData').onclick = async () => {
     $('#setNotify').checked = settings.notify_enabled === '1';
     $('#setEmailNotify').checked = settings.email_notify_enabled === '1';
     selectedStudentIds.clear();
-    $('#clearAllDataMsg').textContent = `All saved data erased (${total} records). Accounts were reset to configured credentials and settings returned to defaults.`;
+    const notificationCount = Number(result.deleted.notifications) || 0;
+    $('#clearAllDataMsg').textContent = `All saved data erased (${total} records), including ${notificationCount} notification log entr${notificationCount === 1 ? 'y' : 'ies'}. Accounts were reset to configured credentials and settings returned to defaults.`;
     await Promise.all([
       loadOverview(),
       loadAttendance(),

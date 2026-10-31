@@ -11,6 +11,7 @@ process.env.DEVICE_KEY = 'test-device-key';
 process.env.AUTH_SECRET = 'test-auth-secret-with-enough-entropy-for-tests';
 
 const { app, appReady } = require('../server');
+const { db } = require('../db');
 
 test('security headers, role-based access, and login rate limit', async () => {
   await appReady;
@@ -54,6 +55,10 @@ test('security headers, role-based access, and login rate limit', async () => {
     assert.equal(userClaims.rememberMe, true);
     assert.ok(userClaims.expiresAt - Date.now() > 29 * 24 * 3600 * 1000);
     assert.ok(userClaims.expiresAt - Date.now() <= 30 * 24 * 3600 * 1000);
+    const userHeaders = {
+      Authorization: `Bearer ${user.body.token}`,
+      'Content-Type': 'application/json',
+    };
 
     const adminHeaders = {
       Authorization: `Bearer ${admin.body.token}`,
@@ -86,6 +91,53 @@ test('security headers, role-based access, and login rate limit', async () => {
     const studentDetails = await studentDetailsResponse.json();
     assert.equal(studentDetails.parent_email, 'guardian@example.com');
     assert.equal(studentDetails.email_consent, 1);
+
+    const unknownUid = 'A1B2C3D4';
+    const unknownTap = await request('/api/tap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Device-Key': 'test-device-key' },
+      body: JSON.stringify({ uid: unknownUid }),
+    });
+    assert.equal(unknownTap.status, 404);
+    const latestUserEvent = await request('/api/user/latest?after=0&attempt_after=0', {
+      headers: userHeaders,
+    });
+    const latestUserData = await latestUserEvent.json();
+    assert.equal(latestUserEvent.status, 200, JSON.stringify(latestUserData));
+    assert.equal(latestUserData.latest.code, 'UNKNOWN_CARD');
+    assert.equal(latestUserData.latest.uid, unknownUid);
+
+    const hidTap = await request('/api/user/tap', {
+      method: 'POST',
+      headers: userHeaders,
+      body: JSON.stringify({ uid: 'B1C2D3E4' }),
+    });
+    assert.equal(hidTap.status, 404);
+    assert.equal((await hidTap.json()).code, 'UNKNOWN_CARD');
+    assert.equal((await request('/api/user/tap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uid: 'B1C2D3E4' }),
+    })).status, 401);
+
+    const duplicateStudent = await request('/api/user/students', {
+      method: 'POST',
+      headers: userHeaders,
+      body: JSON.stringify({
+        lrn: '123456789014',
+        surname: 'Test',
+        first_name: 'Email',
+        grade: 7,
+        section: 'Email Test',
+        rfid_uid: unknownUid,
+        parent_name: 'Guardian',
+      }),
+    });
+    assert.equal(duplicateStudent.status, 409);
+    assert.equal(
+      (await duplicateStudent.json()).error,
+      "This student is already enrolled. Please contact the admin to update the student's information."
+    );
 
     const invalidEmailResponse = await request('/api/students', {
       method: 'POST',
@@ -173,6 +225,25 @@ test('security headers, role-based access, and login rate limit', async () => {
     assert.equal(limited.response.headers.get('ratelimit-limit'), '10');
     assert.equal(limited.response.headers.get('ratelimit-remaining'), '0');
     assert.ok(Number(limited.response.headers.get('retry-after')) > 0);
+
+    await db.prepare(
+      'INSERT INTO notifications(kind,date,message,status,provider,ts,channel) VALUES(?,?,?,?,?,?,?)'
+    ).run('ARRIVAL', '2026-10-31', 'Test notification', 'sent', 'test', '2026-10-31T08:00:00', 'sms');
+    await db.prepare('DELETE FROM login_rate_limits').run();
+    const resetAdmin = await login('principal@school.example', 'test-admin-password');
+    assert.equal(resetAdmin.response.status, 200);
+    const reset = await request('/api/data', {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${resetAdmin.body.token}` },
+    });
+    assert.equal(reset.status, 200);
+    const resetResult = await reset.json();
+    assert.equal(resetResult.deleted.notifications, 1);
+    const notifications = await request('/api/notifications', {
+      headers: { Authorization: `Bearer ${resetResult.token}` },
+    });
+    assert.equal(notifications.status, 200);
+    assert.deepEqual(await notifications.json(), []);
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());

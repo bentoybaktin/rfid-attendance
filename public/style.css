@@ -140,6 +140,21 @@ main {
   gap: 16px;
   align-items: start;
 }
+.skeleton-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.skeleton-toolbar .skeleton-heading { width: 28%; }
+.skeleton-control { width: 140px; height: 38px; }
+.skeleton-table { min-height: 360px; align-content: start; }
+.skeleton-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
 .skeleton-sidebar { display: grid; gap: 16px; }
 .skeleton-panel { display: grid; gap: 14px; }
 .skeleton-panel-large { min-height: 310px; align-content: start; }
@@ -164,6 +179,7 @@ main {
 @keyframes skeleton-shimmer { to { background-position: -200% 0; } }
 @media (max-width: 860px) {
   .skeleton-content-grid { grid-template-columns: 1fr; }
+  .skeleton-settings-grid { grid-template-columns: 1fr; }
   .skeleton-panel-large { min-height: 250px; }
 }
 
@@ -195,6 +211,29 @@ main {
   padding: clamp(8px, 3vw, 20px);
   overflow-y: auto;
   background: rgb(7 20 38 / 58%);
+}
+.student-enrollment-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  background: var(--bad-bg);
+  border: 1px solid color-mix(in srgb, var(--bad) 32%, transparent);
+  border-radius: 8px;
+  font-weight: 600;
+}
+.student-enrollment-error::before {
+  content: "!";
+  display: grid;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  color: #fff;
+  background: var(--bad);
+  border-radius: 50%;
+  font-size: 13px;
+  line-height: 1;
 }
 .student-modal-panel {
   width: min(100%, 560px);

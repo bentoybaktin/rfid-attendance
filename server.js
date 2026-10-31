@@ -380,6 +380,7 @@ app.post('/api/tap', createRateLimiter({
 const userPermissions = new Set([
   'GET /user/latest',
   'GET /classes',
+  'POST /user/tap',
   'POST /user/students',
 ]);
 
@@ -503,6 +504,7 @@ app.get('/api/user/latest', async (req, res) => {
     ).get(afternoonLateTime, afternoonLateTime, afterId),
     db.prepare(
       `SELECT a.id AS attempt_id,a.date,a.ts,a.code,a.message,a.expected_type,
+              CASE WHEN a.code='UNKNOWN_CARD' THEN a.uid ELSE NULL END AS uid,
               s.name,s.grade,s.section,s.surname,s.first_name,s.middle_name,s.name_extension
        FROM scan_attempts a
        LEFT JOIN students s ON s.id=a.student_id
@@ -527,6 +529,19 @@ app.get('/api/user/latest', async (req, res) => {
     scan_cursor: Number(scanCursor.id),
     attempt_cursor: Number(attemptCursor.id),
   });
+});
+
+app.post('/api/user/tap', createRateLimiter({
+  windowMs: 60 * 1000,
+  limit: 120,
+  message: 'Too many scans. Try again in one minute.',
+}), async (req, res) => {
+  const uid = String(req.body.uid || '').trim();
+  if (!uid || uid.length > 64 || !/[0-9a-f]/i.test(uid)) {
+    return res.status(400).json({ error: 'Enter a valid card UID' });
+  }
+  const result = await processTap(uid);
+  res.status(result.http || 200).json(result);
 });
 
 app.put('/api/account', async (req, res) => {
@@ -864,7 +879,9 @@ app.post('/api/user/students', async (req, res) => {
      LIMIT 1`
   ).get(s.name, s.surname, s.first_name, s.middle_name || '', s.name_extension || '');
   if (duplicateName) {
-    return res.status(409).json({ error: 'This student name already exists. Contact the admin for RFID updates.' });
+    return res.status(409).json({
+      error: "This student is already enrolled. Please contact the admin to update the student's information.",
+    });
   }
 
   try {

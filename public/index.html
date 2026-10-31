@@ -104,7 +104,8 @@
             </span>
             <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
-            </svg>np
+            </svg>
+
           </span>
         </label>
         <p id="userThemeMsg" class="muted" role="status">Theme choice is saved in this browser.</p>
@@ -172,36 +173,7 @@
     <p id="loadError" class="err hidden" role="alert"></p>
     <div id="tabLoading" class="tab-loading hidden" role="status" aria-live="polite">
       <span id="tabLoadingMessage" class="visually-hidden">Loading...</span>
-      <div class="loading-skeleton" aria-hidden="true">
-        <div class="skeleton-cards">
-          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-          <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-        </div>
-        <div class="skeleton-content-grid">
-          <div class="skeleton-panel skeleton-panel-large">
-            <span class="skeleton-block skeleton-heading"></span>
-            <span class="skeleton-block skeleton-row"></span>
-            <span class="skeleton-block skeleton-row"></span>
-            <span class="skeleton-block skeleton-row"></span>
-            <span class="skeleton-block skeleton-row"></span>
-            <span class="skeleton-block skeleton-row"></span>
-          </div>
-          <div class="skeleton-sidebar">
-            <div class="skeleton-panel">
-              <span class="skeleton-block skeleton-heading"></span>
-              <span class="skeleton-block skeleton-row"></span>
-              <span class="skeleton-block skeleton-row"></span>
-              <span class="skeleton-block skeleton-row"></span>
-            </div>
-            <div class="skeleton-panel skeleton-panel-short">
-              <span class="skeleton-block skeleton-heading"></span>
-              <span class="skeleton-block skeleton-row"></span>
-            </div>
-          </div>
-        </div>
-      </div>
+      <div id="loadingSkeleton" class="loading-skeleton" aria-hidden="true"></div>
     </div>
     <!-- Overview -->
     <section id="tab-overview" class="tab">

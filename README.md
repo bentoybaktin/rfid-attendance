@@ -130,6 +130,7 @@ Scores only the selected calendar month (`risk.js`). The current month is select
 Per gate: ESP32 dev board, RC522 module, two LEDs, buzzer (roughly a few hundred pesos). Wiring and the sketch are in `firmware/esp32_rc522/esp32_rc522.ino`. Set the Wi-Fi name, the server URL (local address for local development, or your Vercel URL after deployment) and `DEVICE_KEY`.
 
 - The reader sends the card UID to `POST /api/tap` with header `x-device-key`.
+- A Windows reader that types the card UID like a keyboard can scan from the user account's **Student scan** page. Keep that page open and active; scans are captured automatically and submitted using the signed-in user's session. While the add-student form is open, a quick reader scan fills only the RFID UID field, not the currently focused text field.
 - If the server is unreachable, taps are queued in RAM with a timestamp and replayed later. Old replayed taps do not trigger SMS.
 - Cards: RC522 reads 13.56 MHz MIFARE cards. Check that your school's existing IDs use this type before buying hardware; many low-cost ID cards do.
 
