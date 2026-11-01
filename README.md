@@ -22,9 +22,9 @@ Admins can open a student's shareable detail URL by selecting their name in **St
 
 For compatibility with PHP-style links, `/index.php?url=%2Fadmin%2Fdashboard` redirects to the existing dashboard at `/`. It does not add a PHP runtime or bypass the normal sign-in and role checks.
 
-When an admin selects a dashboard tab, a loading screen stays visible until that tab's data has loaded, then the completed tab is shown. This makes the transition clearer but does not replace server/database performance improvements.
+When an admin selects a dashboard tab, a content-shaped preview stays visible until that tab's data has loaded; load failures explain whether the issue is the connection, server, or account and offer a retry. Empty views explain why there is no data and provide relevant actions where available. Forms validate fields inline, and success messages confirm completed changes. Section dropdowns show up to five options at a time and scroll for longer lists. These UI states make transitions clearer but do not replace server/database performance improvements.
 
-Dashboard overview refreshes every 15 seconds, and the user scan screen polls every 2 seconds without overlapping requests. Settings, section lists, and the admin student roster are cached in the current page's memory for up to 30 seconds and cleared after writes. These authenticated endpoints are intentionally not shared through a public CDN cache: doing so could expose admin-only student data or serve it across accounts.
+Dashboard overview refreshes every 15 seconds, and the user scan screen polls every 2 seconds without overlapping requests. The overview shows the four latest live taps and scan attempts; **View All** opens every scan attempt in an overlay. Live taps and scan attempts from previous school dates are deleted at midnight Manila time; attendance records are retained. Settings, section lists, and the admin student roster are cached in the current page's memory for up to 30 seconds and cleared after writes. These authenticated endpoints are intentionally not shared through a public CDN cache: doing so could expose admin-only student data or serve it across accounts.
 
 Run with your own secrets:
 

@@ -4,17 +4,435 @@ if (window.location.pathname === '/index.php') {
 
 const $ = (s) => document.querySelector(s);
 function clearLoadError() {
-  $('#loadError').textContent = '';
+  $('#loadErrorMessage').textContent = '';
+  $('#loadErrorCause').textContent = '';
   $('#loadError').classList.add('hidden');
+  if ($('#userNoticeTitle').textContent === 'Could not load data') {
+    clearTimeout(userNoticeTimer);
+    $('#userNotice').classList.add('hidden');
+  }
 }
 function showLoadError(error) {
-  $('#loadError').textContent = error instanceof Error ? error.message : 'Could not load data';
+  const tabName = document.querySelector(`#tabs [data-tab="${currentTab}"]`)?.textContent.trim() || 'page';
+  const detail = error instanceof Error ? error.message : 'The request did not complete.';
+  let cause = 'The server rejected this request. Check the selected date or filters, or ask an administrator to confirm your access.';
+  if (error instanceof TypeError) {
+    cause = 'Connection issue: your browser could not reach the attendance server. Check your connection and confirm the server is running.';
+  } else if (error && error.status >= 500) {
+    cause = 'Server issue: the attendance service failed while preparing this data. This is not caused by your form entry; contact the school administrator if it continues.';
+  } else if (error && (error.status === 401 || error.status === 403)) {
+    cause = 'Account or permission issue: this account cannot access the requested data. Sign in again or ask an administrator to confirm your access.';
+  } else if (error && error.status === 404) {
+    cause = 'The attendance server does not have this endpoint available. Restart it with the current app version and reload this page.';
+  }
+  $('#loadErrorTitle').textContent = `We couldn't load ${tabName.toLowerCase()}`;
+  $('#loadErrorMessage').textContent = detail;
+  $('#loadErrorCause').textContent = cause;
+  $('#retryTabLoad').textContent = `Retry ${tabName.toLowerCase()}`;
   $('#loadError').classList.remove('hidden');
+  showUserNotice('error', 'Could not load data', operationError(error, `load ${tabName.toLowerCase()}`, 'check your filters and retry'));
+}
+function emptyState(title, reason, action = '') {
+  const actionMarkup = action
+    ? `<button type="button" class="ghost" data-empty-action="${esc(action)}">${action === 'add-section' ? 'Add a section' : action === 'add-student' ? 'Add a student' : action === 'show-all-students' ? 'Show all sections' : action === 'review-all-risk' ? 'Review everyone' : 'Continue'}</button>`
+    : '';
+  return `<div class="empty-state"><strong>${esc(title)}</strong><p>${esc(reason)}</p>${actionMarkup}</div>`;
+}
+function emptyTableRow(columns, title, reason, action = '') {
+  return `<tr><td colspan="${columns}">${emptyState(title, reason, action)}</td></tr>`;
+}
+function getSectionDropdown(select) {
+  const wrapper = select.closest('.section-dropdown');
+  return wrapper ? {
+    wrapper,
+    trigger: wrapper.querySelector('.section-dropdown-trigger'),
+    menu: document.getElementById(select.dataset.dropdownMenuId),
+  } : null;
+}
+function closeSectionDropdown(select, returnFocus = false) {
+  const dropdown = getSectionDropdown(select);
+  if (!dropdown) return;
+  dropdown.menu.classList.add('hidden');
+  dropdown.trigger.setAttribute('aria-expanded', 'false');
+  dropdown.wrapper.classList.remove('is-open');
+  if (returnFocus) dropdown.trigger.focus();
+}
+function moveFocusFromSectionDropdown(select, backwards) {
+  const dropdown = getSectionDropdown(select);
+  if (!dropdown) return;
+  closeSectionDropdown(select);
+  const focusable = Array.from(document.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  )).filter((element) =>
+    element.getClientRects().length &&
+    !element.closest('.hidden') &&
+    !dropdown.menu.contains(element)
+  );
+  const currentIndex = focusable.indexOf(dropdown.trigger);
+  focusable[currentIndex + (backwards ? -1 : 1)]?.focus();
+}
+let sectionDropdownSearch = '';
+let sectionDropdownSearchTimer;
+function searchSectionDropdown(select, key, currentIndex = -1) {
+  clearTimeout(sectionDropdownSearchTimer);
+  sectionDropdownSearch += key.toLocaleLowerCase();
+  sectionDropdownSearchTimer = setTimeout(() => { sectionDropdownSearch = ''; }, 700);
+  const options = Array.from(getSectionDropdown(select).menu.querySelectorAll('[role="option"]'));
+  const start = Math.max(0, currentIndex + 1);
+  const match = options.slice(start).concat(options.slice(0, start))
+    .find((option) => option.textContent.trim().toLocaleLowerCase().startsWith(sectionDropdownSearch));
+  match?.focus();
+  match?.scrollIntoView({ block: 'nearest' });
+}
+function updateSectionDropdown(select) {
+  const dropdown = getSectionDropdown(select);
+  if (!dropdown) return;
+  const selected = select.selectedOptions[0];
+  dropdown.trigger.textContent = selected?.textContent || 'Choose a section';
+  dropdown.trigger.title = dropdown.trigger.textContent;
+  dropdown.trigger.disabled = select.disabled;
+  dropdown.menu.replaceChildren();
+  Array.from(select.options).forEach((option, index) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'section-dropdown-option';
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(option.selected));
+    item.textContent = option.textContent;
+    item.title = option.textContent;
+    item.dataset.optionIndex = String(index);
+    item.addEventListener('click', () => {
+      select.selectedIndex = index;
+      select.dispatchEvent(new Event('input', { bubbles: true }));
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      updateSectionDropdown(select);
+      if (select.form?.dataset.validationSequence) {
+        const nextField = firstInvalidField(select.form);
+        if (nextField) {
+          showFieldValidation(nextField);
+          focusValidationField(nextField);
+        } else {
+          delete select.form.dataset.validationSequence;
+          closeSectionDropdown(select, true);
+        }
+      } else {
+        closeSectionDropdown(select, true);
+      }
+    });
+    dropdown.menu.appendChild(item);
+  });
+  if (dropdown.trigger.getAttribute('aria-expanded') === 'true') positionSectionDropdown(select);
+}
+function positionSectionDropdown(select) {
+  const dropdown = getSectionDropdown(select);
+  if (!dropdown) return;
+  const rect = dropdown.trigger.getBoundingClientRect();
+  const menu = dropdown.menu;
+  const desiredHeight = Math.min(menu.scrollHeight, 200);
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const openAbove = spaceBelow < desiredHeight && rect.top > spaceBelow;
+  const availableSpace = openAbove ? rect.top : spaceBelow;
+  menu.style.maxHeight = `${Math.max(80, Math.min(200, availableSpace - 8))}px`;
+  menu.style.left = `${rect.left}px`;
+  menu.style.top = `${openAbove ? Math.max(8, rect.top - Math.min(desiredHeight, availableSpace - 8)) : rect.bottom + 4}px`;
+  menu.style.width = `${rect.width}px`;
+}
+function openSectionDropdown(select, focusIndex = -1) {
+  const dropdown = getSectionDropdown(select);
+  if (!dropdown || select.disabled) return;
+  document.querySelectorAll('.section-dropdown-trigger[aria-expanded="true"]').forEach((trigger) => {
+    if (trigger !== dropdown.trigger) {
+      const other = document.getElementById(trigger.dataset.selectId);
+      if (other) closeSectionDropdown(other);
+    }
+  });
+  updateSectionDropdown(select);
+  dropdown.menu.classList.remove('hidden');
+  dropdown.trigger.setAttribute('aria-expanded', 'true');
+  dropdown.wrapper.classList.add('is-open');
+  positionSectionDropdown(select);
+  if (focusIndex >= 0) dropdown.menu.querySelectorAll('[role="option"]')[focusIndex]?.focus();
+  else dropdown.menu.querySelectorAll('[role="option"]')[select.selectedIndex]?.scrollIntoView({ block: 'nearest' });
+}
+function enhanceSectionDropdown(select) {
+  if (getSectionDropdown(select)) {
+    updateSectionDropdown(select);
+    return;
+  }
+  const wrapper = document.createElement('span');
+  wrapper.className = 'section-dropdown';
+  select.parentNode.insertBefore(wrapper, select);
+  wrapper.appendChild(select);
+  select.classList.add('section-dropdown-native');
+  select.tabIndex = -1;
+  select.setAttribute('aria-hidden', 'true');
+
+  const label = select.labels?.[0];
+  const labelText = label
+    ? Array.from(label.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join(' ').trim()
+    : 'Section';
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'section-dropdown-trigger';
+  trigger.id = `${select.id}Control`;
+  trigger.dataset.selectId = select.id;
+  const menu = document.createElement('div');
+  menu.id = `${select.id}Options`;
+  menu.className = 'section-dropdown-menu hidden';
+  menu.setAttribute('role', 'listbox');
+  menu.setAttribute('aria-label', labelText || 'Section');
+  trigger.setAttribute('role', 'combobox');
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-controls', menu.id);
+  trigger.setAttribute('aria-required', String(select.required));
+  trigger.setAttribute('aria-label', labelText || 'Section');
+  select.dataset.dropdownMenuId = menu.id;
+  wrapper.appendChild(trigger);
+  document.body.appendChild(menu);
+
+  trigger.addEventListener('click', () => {
+    if (trigger.getAttribute('aria-expanded') === 'true') closeSectionDropdown(select);
+    else openSectionDropdown(select);
+  });
+  trigger.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openSectionDropdown(select, 0);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      openSectionDropdown(select, select.options.length - 1);
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      openSectionDropdown(select);
+      searchSectionDropdown(select, event.key);
+    }
+  });
+  menu.addEventListener('keydown', (event) => {
+    const options = Array.from(menu.querySelectorAll('[role="option"]'));
+    const currentIndex = options.indexOf(document.activeElement);
+    let targetIndex = currentIndex;
+    if (event.key === 'ArrowDown') targetIndex = Math.min(options.length - 1, currentIndex + 1);
+    else if (event.key === 'ArrowUp') targetIndex = Math.max(0, currentIndex - 1);
+    else if (event.key === 'Home') targetIndex = 0;
+    else if (event.key === 'End') targetIndex = options.length - 1;
+    else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeSectionDropdown(select, true);
+      return;
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      moveFocusFromSectionDropdown(select, event.shiftKey);
+      return;
+    } else if (event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      searchSectionDropdown(select, event.key, currentIndex);
+      return;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    options[targetIndex]?.focus();
+    options[targetIndex]?.scrollIntoView({ block: 'nearest' });
+  });
+  label?.addEventListener('click', (event) => {
+    if (event.target === label) {
+      event.preventDefault();
+      trigger.focus();
+    }
+  });
+  updateSectionDropdown(select);
+}
+function focusValidationField(field) {
+  const dropdown = field instanceof HTMLSelectElement ? getSectionDropdown(field) : null;
+  (dropdown?.trigger || field).focus();
+}
+document.addEventListener('pointerdown', (event) => {
+  document.querySelectorAll('.section-dropdown-trigger[aria-expanded="true"]').forEach((trigger) => {
+    const select = document.getElementById(trigger.dataset.selectId);
+    const dropdown = select && getSectionDropdown(select);
+    if (dropdown && !dropdown.wrapper.contains(event.target) && !dropdown.menu.contains(event.target)) {
+      closeSectionDropdown(select);
+    }
+  });
+});
+window.addEventListener('resize', () => {
+  document.querySelectorAll('.section-dropdown-trigger[aria-expanded="true"]').forEach((trigger) => {
+    const select = document.getElementById(trigger.dataset.selectId);
+    if (select) positionSectionDropdown(select);
+  });
+});
+window.addEventListener('scroll', () => {
+  document.querySelectorAll('.section-dropdown-trigger[aria-expanded="true"]').forEach((trigger) => {
+    const select = document.getElementById(trigger.dataset.selectId);
+    if (select) positionSectionDropdown(select);
+  });
+}, true);
+function validationMessage(field) {
+  const label = field.labels?.[0]?.textContent.replace(/\s+/g, ' ').trim() ||
+    field.getAttribute('aria-label') || 'This field';
+  if (field.validity.valueMissing) return `${label} is required.`;
+  if (field.validity.customError) return field.validationMessage;
+  if (field.validity.typeMismatch && field.type === 'email') return `${label} is invalid.`;
+  if (field.validity.typeMismatch) return `Enter a valid value for ${label}.`;
+  if (field.validity.patternMismatch) return field.dataset.validationHelp || `Use the required format for ${label}.`;
+  if (field.validity.tooShort) return `${label} must be at least ${field.minLength} characters. Add more characters and try again.`;
+  if (field.validity.tooLong) return `${label} must be no more than ${field.maxLength} characters. Shorten this value and try again.`;
+  if (field.validity.rangeUnderflow) return `${label} must be at least ${field.min}. Increase the value and try again.`;
+  if (field.validity.rangeOverflow) return `${label} must be no more than ${field.max}. Reduce the value and try again.`;
+  if (field.validity.badInput) return `Enter a valid value for ${label}.`;
+  return field.validationMessage || `Check ${label} and try again.`;
+}
+function showFieldValidation(field, messageOverride = '') {
+  if (!field.id) return;
+  const errorId = `${field.id}-validation`;
+  let message = document.getElementById(errorId);
+  if (!message) {
+    message = document.createElement('span');
+    message.id = errorId;
+    message.className = 'field-error';
+    const control = getSectionDropdown(field)?.wrapper || field.closest('.password-field') || field;
+    control.insertAdjacentElement('afterend', message);
+  }
+  message.textContent = messageOverride || validationMessage(field);
+  field.setAttribute('aria-invalid', 'true');
+  const dropdown = field instanceof HTMLSelectElement ? getSectionDropdown(field) : null;
+  if (dropdown) {
+    dropdown.trigger.setAttribute('aria-invalid', 'true');
+    dropdown.trigger.setAttribute('aria-describedby', errorId);
+  }
+  const describedBy = (field.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+  if (!describedBy.includes(errorId)) describedBy.push(errorId);
+  field.setAttribute('aria-describedby', describedBy.join(' '));
+  field.classList.remove('field-invalid-shake');
+  void field.offsetWidth;
+  field.classList.add('field-invalid-shake');
+  dropdown?.trigger.classList.add('field-invalid-shake');
+}
+function clearFieldValidation(field) {
+  if (!field.id) return;
+  document.getElementById(`${field.id}-validation`)?.remove();
+  const describedBy = (field.getAttribute('aria-describedby') || '').split(/\s+/)
+    .filter((id) => id && id !== `${field.id}-validation`);
+  if (describedBy.length) field.setAttribute('aria-describedby', describedBy.join(' '));
+  else field.removeAttribute('aria-describedby');
+  field.removeAttribute('aria-invalid');
+  const dropdown = field instanceof HTMLSelectElement ? getSectionDropdown(field) : null;
+  if (dropdown) {
+    dropdown.trigger.removeAttribute('aria-invalid');
+    dropdown.trigger.removeAttribute('aria-describedby');
+    dropdown.trigger.classList.remove('field-invalid-shake');
+  }
+}
+function clearFormValidation(form) {
+  delete form.dataset.validationSequence;
+  form.querySelectorAll('input, select, textarea').forEach((field) => {
+    field.setCustomValidity('');
+    clearFieldValidation(field);
+  });
+}
+function firstInvalidField(form) {
+  return Array.from(form.elements).find((field) =>
+    (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) &&
+    field.willValidate && !field.validity.valid
+  );
+}
+const validationFormsInProgress = new WeakSet();
+document.addEventListener('invalid', (event) => {
+  if (!(event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement)) return;
+  event.preventDefault();
+  const form = event.target.form;
+  if (!form || validationFormsInProgress.has(form)) return;
+  validationFormsInProgress.add(form);
+  setTimeout(() => validationFormsInProgress.delete(form), 0);
+  const field = firstInvalidField(form);
+  if (!field) return;
+  form.dataset.validationSequence = 'true';
+  showFieldValidation(field);
+  focusValidationField(field);
+}, true);
+document.addEventListener('input', (event) => {
+  const field = event.target;
+  if ((field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) &&
+      field.validity.valid) clearFieldValidation(field);
+});
+document.addEventListener('change', (event) => {
+  const field = event.target;
+  if ((field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) &&
+      field.validity.valid) clearFieldValidation(field);
+});
+document.addEventListener('blur', (event) => {
+  const field = event.target instanceof HTMLButtonElement && event.target.dataset.selectId
+    ? document.getElementById(event.target.dataset.selectId)
+    : event.target;
+  if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) ||
+      !field.form?.dataset.validationSequence) return;
+  setTimeout(() => {
+    if (!field.validity.valid) return;
+    const nextField = firstInvalidField(field.form);
+    if (nextField) {
+      showFieldValidation(nextField);
+      nextField.focus();
+    } else {
+      delete field.form.dataset.validationSequence;
+    }
+  }, 0);
+}, true);
+document.addEventListener('submit', (event) => {
+  if (event.target instanceof HTMLFormElement) delete event.target.dataset.validationSequence;
+}, true);
+document.addEventListener('reset', (event) => {
+  if (!(event.target instanceof HTMLFormElement)) return;
+  setTimeout(() => {
+    event.target.querySelectorAll('.section-dropdown-native').forEach(updateSectionDropdown);
+  }, 0);
+});
+function operationError(error, operation, resolution) {
+  if (error instanceof TypeError) {
+    return 'Cannot reach the server. Check your connection.';
+  }
+  if (error && error.status >= 500) {
+    return 'The server encountered an error. Try again or contact the administrator.';
+  }
+  if (error && error.status === 401 && operation === 'sign in') {
+    return 'Email or password is incorrect.';
+  }
+  if (error && error.status === 401) {
+    return 'Your session has expired. Sign in again.';
+  }
+  if (error && error.status === 403) {
+    return 'You do not have permission to do this.';
+  }
+  if (error && error.status === 404) {
+    return 'This feature is unavailable on the current server version.';
+  }
+  if (error && error.status === 429) {
+    return 'Too many attempts. Wait before trying again.';
+  }
+  if (error && error.status === 409) {
+    return 'This record already exists. Check for duplicates.';
+  }
+  if (error && error.status === 400) {
+    return 'Some details are invalid. Check the highlighted fields.';
+  }
+  return `Could not ${operation}. ${resolution}`;
 }
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const clsLabel = (c) => `Grade ${c.grade} - ${c.section}`;
 const hhmm = (t) => (t ? t.slice(0, 5) : '');
+const userStudentName = (student) => {
+  if (!student.first_name || !student.surname) return student.display_name || student.name;
+  const middleInitial = student.middle_name ? ` ${student.middle_name.trim().charAt(0).toUpperCase()}.` : '';
+  return `${student.first_name}${middleInitial} ${student.surname}${student.name_extension ? ` ${student.name_extension}` : ''}`;
+};
+const formatScanTime = (timestamp) => {
+  const match = timestamp?.slice(11, 16).match(/^(\d{2}):(\d{2})$/);
+  if (!match) return timestamp?.slice(11, 19) || '';
+  const hour = Number(match[1]);
+  return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? 'AM' : 'PM'}`;
+};
+const formatUserLrn = (lrn) => String(lrn || '').replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ').trim();
 
 function setTheme(theme) {
   const selectedTheme = theme === 'dark' ? 'dark' : 'light';
@@ -74,7 +492,11 @@ if (studentRouteMatch) currentTab = 'students';
 let recoveryChallenge = '';
 let recoveryQuestionIds = [];
 let userAddMode = false;
+let dashboardBootstrapFailed = false;
+let pendingDeleteConfirmation = null;
 const readOnlyApiCache = new Map();
+const scanReviewPageSize = 100;
+let scanReviewOffset = 0;
 
 // ---------- API ----------
 async function api(path, opts = {}) {
@@ -122,6 +544,8 @@ function showLogin() {
   clearTimeout(timer);
   clearTimeout(userTimer);
   clearTimeout(userHideTimer);
+  clearTimeout(userNoticeTimer);
+  $('#userNotice').classList.add('hidden');
   $('#app').classList.add('hidden');
   $('#userApp').classList.add('hidden');
   $('#login').classList.remove('hidden');
@@ -169,7 +593,8 @@ $('#loginForm').onsubmit = async (e) => {
     await boot();
   } catch (err) {
     $('#loginErr').className = 'err';
-    $('#loginErr').textContent = err.message;
+    $('#loginErr').textContent = operationError(err, 'sign in', 'check your email and password, then try again.');
+    showOperationNotice(err, 'sign in', 'check your email and password, then try again.');
   } finally {
     submitButton.disabled = false;
     submitButton.textContent = 'Sign in';
@@ -226,6 +651,7 @@ $('#recoveryLookupForm').onsubmit = async (event) => {
   } catch (error) {
     $('#recoveryMsg').className = 'err';
     $('#recoveryMsg').textContent = error.message;
+    showOperationNotice(error, 'start password recovery', 'check the admin email address or contact the school administrator.');
   } finally {
     button.disabled = false;
   }
@@ -258,9 +684,11 @@ $('#recoveryResetForm').onsubmit = async (event) => {
     $('#email').value = recoveredEmail;
     $('#loginErr').className = 'muted';
     $('#loginErr').textContent = 'Password reset. Sign in with your new password.';
+    showAccountToast('Your admin password has been reset. Sign in with the new password.');
   } catch (error) {
     $('#recoveryMsg').className = 'err';
     $('#recoveryMsg').textContent = error.message;
+    showOperationNotice(error, 'reset the admin password', 'check the recovery answers and choose a password with at least 12 characters.');
   } finally {
     button.disabled = false;
   }
@@ -309,6 +737,7 @@ $('#logout').onclick = logout;
 $('#userLogout').onclick = logout;
 $('#userAddStudentBtn').onclick = () => openUserStudentForm().catch((err) => {
   $('#userStatus').textContent = `Could not open the student form: ${err.message}`;
+  showOperationNotice(err, 'open student enrollment', 'check your connection and account permissions, then retry.');
 });
 $('#userNavToggle').onclick = () => {
   const open = $('#userApp').classList.toggle('nav-open');
@@ -325,6 +754,7 @@ async function submitUserHidScan(rawUid) {
   const uid = rawUid.replace(/[^0-9a-f]/gi, '').toUpperCase();
   if (!/^(?:[0-9A-F]{8}|[0-9A-F]{10}|[0-9A-F]{12}|[0-9A-F]{14}|[0-9A-F]{16}|[0-9A-F]{18}|[0-9A-F]{20})$/.test(uid)) {
     $('#userStatus').textContent = 'Could not read a valid card UID. Tap the card again.';
+    showUserNotice('error', 'Card could not be read', 'No valid card number received. Tap again or check the reader.');
     return;
   }
   if (userHidScanInProgress) return;
@@ -335,6 +765,7 @@ async function submitUserHidScan(rawUid) {
     await api('/user/tap', { method: 'POST', body: { uid } });
   } catch (error) {
     $('#userStatus').textContent = error.message;
+    showOperationNotice(error, 'record this card scan', 'check that the reader and attendance service are connected, then tap again.');
   } finally {
     userHidScanInProgress = false;
   }
@@ -489,8 +920,21 @@ async function boot() {
       api('/settings'),
       refreshLookups(),
     ]);
+    dashboardBootstrapFailed = false;
   } catch (err) {
-    if (err.status === 403) logout();
+    if (err.status === 403) {
+      logout();
+      return;
+    }
+    dashboardBootstrapFailed = true;
+    $('#login').classList.add('hidden');
+    $('#userApp').classList.add('hidden');
+    $('#app').classList.remove('hidden');
+    document.querySelectorAll('.tab').forEach((tab) => tab.classList.toggle('hidden', tab.id !== `tab-${currentTab}`));
+    document.querySelectorAll('#tabs [data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === currentTab));
+    $('#tabLoading').classList.add('hidden');
+    $('#app > main').setAttribute('aria-busy', 'false');
+    showLoadError(err);
     return;
   }
   $('#schoolName').textContent = settings.school_name;
@@ -502,6 +946,7 @@ async function boot() {
   if (initialStudentId) {
     await showStudentDetails(initialStudentId).catch((error) => {
       $('#studentDetailsMsg').textContent = error.message;
+      showOperationNotice(error, 'open this student record', 'return to the Students list and open the record again.');
     });
   }
 }
@@ -516,12 +961,16 @@ async function pollUserScreen() {
     return;
   }
   if (student.code) {
+    $('#userApp .user-screen').classList.remove('has-scan');
+    $('#userScreenTitle').classList.remove('hidden');
+    $('#userStatus').classList.remove('hidden');
     $('#userStudentDetails').classList.add('hidden');
     $('#userStatus').textContent = student.message;
     if (student.code === 'UNKNOWN_CARD' && !userAddMode && $('#stuFormPanel').classList.contains('hidden')) {
       $('#userStatus').textContent = 'Unregistered card detected. Opening student enrollment...';
       openUserStudentForm(student.uid).catch((error) => {
         $('#userStatus').textContent = `Could not open student enrollment: ${error.message}`;
+        showOperationNotice(error, 'open student enrollment', 'ask the administrator to confirm this account can add students.');
       });
       return;
     }
@@ -529,26 +978,34 @@ async function pollUserScreen() {
     userHideTimer = setTimeout(hideUserStudent, 10000);
     return;
   }
-  $('#userStatus').textContent = 'Student scan detected';
+  const isCheckIn = student.type === 'MORNING_IN' || student.type === 'AFTERNOON_IN';
+  const time = formatScanTime(student.ts);
+  const studentName = userStudentName(student);
+  const resultLabel = isCheckIn ? 'Present' : 'Checked out';
+  const resultDetails = isCheckIn
+    ? `Time in ${time} · ${student.status === 'late' ? 'Late' : 'On time'}`
+    : `Time out ${time}`;
+  $('#userApp .user-screen').classList.add('has-scan');
+  $('#userScreenTitle').classList.add('hidden');
+  $('#userStatus').classList.add('hidden');
   $('#userStudentDetails').classList.remove('hidden');
-  $('#userStudentName').textContent = student.display_name || student.name;
-  $('#userGradeSection').textContent = clsLabel(student);
-  const eventLabels = {
-    MORNING_IN: 'Morning IN',
-    MORNING_OUT: 'Morning OUT',
-    AFTERNOON_IN: 'Afternoon IN',
-    AFTERNOON_OUT: 'Afternoon OUT',
-  };
-  $('#userTapResult').textContent = `${eventLabels[student.type] || student.type}${student.status === 'late' ? ' (late)' : ''}`;
-  $('#userTapResultBox').classList.toggle('event-in', student.type === 'MORNING_IN' || student.type === 'AFTERNOON_IN');
-  $('#userTapResultBox').classList.toggle('event-out', student.type === 'MORNING_OUT' || student.type === 'AFTERNOON_OUT');
-  $('#userTapTime').textContent = `${student.date} ${student.ts.slice(11, 19)}`;
+  $('#userStudentName').textContent = studentName;
+  $('#userGradeSection').textContent = `Grade ${student.grade} · Section ${student.section}`;
+  $('#userStudentLrn').textContent = student.lrn ? `LRN ${formatUserLrn(student.lrn)}` : '';
+  $('#userStudentLrn').classList.toggle('hidden', !student.lrn);
+  $('#userTapResult').textContent = resultLabel;
+  $('#userTapTime').textContent = resultDetails;
+  $('#userTapResultBox').classList.toggle('event-in', isCheckIn);
+  $('#userTapResultBox').classList.toggle('event-out', !isCheckIn);
   clearTimeout(userHideTimer);
   userHideTimer = setTimeout(hideUserStudent, 10000);
 }
 
 function hideUserStudent() {
+  $('#userApp .user-screen').classList.remove('has-scan');
   $('#userStudentDetails').classList.add('hidden');
+  $('#userScreenTitle').classList.remove('hidden');
+  $('#userStatus').classList.remove('hidden');
   $('#userStatus').textContent = 'Waiting for a card tap...';
 }
 
@@ -558,6 +1015,7 @@ function scheduleUserPoll() {
       await pollUserScreen();
     } catch (error) {
       $('#userStatus').textContent = error.message;
+      showOperationNotice(error, 'check the latest scan status', 'check the reader connection; the screen will retry automatically.');
     } finally {
       if (role === 'user' && !$('#userApp').classList.contains('hidden')) scheduleUserPoll();
     }
@@ -584,10 +1042,7 @@ async function refreshLookups() {
   if (classes.some((c) => `${c.grade}::${c.section}` === studentClassValue)) {
     $('#sfClass').value = studentClassValue;
   }
-  $('#simStudent').innerHTML = students
-    .filter((s) => s.has_rfid_uid)
-    .map((s) => `<option value="${s.id}">${esc(s.display_name || s.name)} (${esc(clsLabel(s))})</option>`)
-    .join('');
+  [$('#attClass'), $('#stuClassFilter'), $('#sfClass')].forEach(enhanceSectionDropdown);
 }
 
 // ---------- tabs ----------
@@ -661,10 +1116,19 @@ const skeletonLayouts = {
       <div class="skeleton-panel">${skeletonHeading}${skeletonRows(4)}</div>
     </div>`,
 };
+const tabLoadingDescriptions = {
+  overview: 'The overview is preparing today’s attendance cards, live tap feed, section totals, and scans to review.',
+  attendance: 'The attendance view is preparing the date and section filters, student rows, scan times, and attendance statuses.',
+  students: 'The student roster is preparing student names, sections, card status, contact consent, and record actions.',
+  risk: 'The early-warning view is preparing the month and risk filters, summary counts, and counselor review rows.',
+  notifications: 'The notification log is preparing delivery times, recipients, messages, and send statuses.',
+  settings: 'Settings are preparing the class schedule, holiday list, notification options, and account controls.',
+};
 function showTabSkeleton(name) {
   const skeleton = $('#loadingSkeleton');
   skeleton.dataset.tab = name;
   skeleton.innerHTML = skeletonLayouts[name];
+  $('#tabLoadingMessage').textContent = `Loading ${name}. ${tabLoadingDescriptions[name]}`;
 }
 let tabLoadId = 0;
 
@@ -700,9 +1164,7 @@ function showTab(name, updateUrl = false) {
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('hidden', t.id !== 'tab-' + name));
   document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
   const loadId = ++tabLoadId;
-  const tabName = document.querySelector(`#tabs [data-tab="${name}"]`)?.textContent.trim() || 'page';
   showTabSkeleton(name);
-  $('#tabLoadingMessage').textContent = `Loading ${tabName}...`;
   $('#tabLoading').classList.remove('hidden');
   $('#app > main').setAttribute('aria-busy', 'true');
   loaders[name]().then(() => {
@@ -717,6 +1179,30 @@ function showTab(name, updateUrl = false) {
     if (name === 'overview') scheduleOverviewRefresh();
   });
 }
+$('#retryTabLoad').onclick = () => {
+  if (dashboardBootstrapFailed) {
+    boot();
+    return;
+  }
+  showTab(currentTab);
+};
+$('#app').addEventListener('click', (event) => {
+  const action = event.target.closest('[data-empty-action]')?.dataset.emptyAction;
+  if (!action) return;
+  if (action === 'add-section') {
+    showTab('students', true);
+    $('#addSectionBtn').click();
+  } else if (action === 'add-student') {
+    showTab('students', true);
+    $('#addStudentBtn').click();
+  } else if (action === 'show-all-students') {
+    $('#stuClassFilter').value = '';
+    loadStudents().catch(showLoadError);
+  } else if (action === 'review-all-risk') {
+    $('#riskFilter').value = 'all';
+    loadRisk().catch(showLoadError);
+  }
+});
 document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
   button.onclick = (event) => {
     event.preventDefault();
@@ -729,6 +1215,7 @@ window.addEventListener('popstate', () => {
     showTab('students');
     showStudentDetails(Number(studentMatch[1])).catch((error) => {
       $('#studentDetailsMsg').textContent = error.message;
+      showOperationNotice(error, 'open this student record', 'return to the Students list and open the record again.');
     });
     return;
   }
@@ -753,8 +1240,8 @@ const badge = (cls, text) => `<span class="badge ${esc(cls)}">${esc(text ?? cls)
 async function loadOverview() {
   const [today, feed, attempts] = await Promise.all([
     api('/today'),
-    api('/feed?limit=25'),
-    api('/scan-attempts?limit=25'),
+    api('/feed?limit=4'),
+    api('/scan-attempts?limit=4'),
   ]);
   const t = today.total;
   $('#todayLine').textContent =
@@ -777,7 +1264,12 @@ async function loadOverview() {
         (c) =>
           `<tr><td>${esc(clsLabel(c))}</td><td class="num">${c.present}</td><td class="num">${c.late}</td><td class="num">${c.halfDay}</td><td class="num">${c.notIn}</td><td class="num">${c.enrolled}</td></tr>`
       )
-      .join('') || '<tr><td colspan="6" class="muted">No student data yet.</td></tr>');
+      .join('') || emptyTableRow(
+      6,
+      'There are no active students to summarize.',
+      'The section totals are empty because no students are currently enrolled.',
+      'add-section'
+    ));
 
   $('#feed').innerHTML =
     feed
@@ -788,52 +1280,108 @@ async function loadOverview() {
            ${badge(f.type.toLowerCase(), f.type.replace('_', ' '))}
            ${f.status === 'late' ? badge('late', 'late') : ''}</li>`
       )
-      .join('') || '<li class="muted">No taps yet.</li>';
+      .join('') || `<li>${emptyState(
+      'No taps recorded for this school day.',
+      'No RFID scans have been recorded in the live feed yet.'
+    )}</li>`;
   $('#scanAttemptsTable').innerHTML =
     '<tr><th>Time</th><th>Student / card</th><th>Result</th></tr>' +
-    (attempts
-      .map((attempt) =>
-        `<tr><td>${esc(attempt.ts.replace('T', ' '))}</td>
-         <td>${esc(attempt.name || 'Unknown card')}${attempt.name ? `<br><small class="muted">${esc(clsLabel(attempt))}</small>` : ''}</td>
-         <td>${esc(attempt.message)}${attempt.expected_type ? `<br><small class="muted">Expected ${esc(attempt.expected_type.replace('_', ' '))}</small>` : ''}</td></tr>`
-      )
-      .join('') || '<tr><td colspan="3" class="muted">No scans need review.</td></tr>');
+    (scanAttemptRows(attempts) || emptyTableRow(
+      3,
+      'No scans need review.',
+      feed.length ? 'Recent scans have not produced any rejected attempts.' : 'No card scans have been recorded yet, so there is nothing to review.'
+    ));
 }
 
+function scanAttemptRows(attempts) {
+  return attempts.map((attempt) =>
+    `<tr><td>${esc(attempt.ts.replace('T', ' '))}</td>
+     <td>${esc(attempt.name || 'Unknown card')}${attempt.name ? `<br><small class="muted">${esc(clsLabel(attempt))}</small>` : ''}</td>
+     <td>${esc(attempt.message)}${attempt.expected_type ? `<br><small class="muted">Expected ${esc(attempt.expected_type.replace('_', ' '))}</small>` : ''}</td></tr>`
+  ).join('');
+}
+
+async function loadScanReview(reset = true) {
+  const table = $('#scanReviewTable');
+  const message = $('#scanReviewMsg');
+  const loadMore = $('#loadMoreScanReviews');
+  if (reset) {
+    scanReviewOffset = 0;
+    table.innerHTML = '<tr><th>Time</th><th>Student / card</th><th>Result</th></tr>';
+    loadMore.classList.add('hidden');
+  }
+  message.textContent = 'Loading scans...';
+  loadMore.disabled = true;
+  try {
+    const attempts = await api(`/scan-attempts?limit=${scanReviewPageSize}&offset=${scanReviewOffset}`);
+    if (attempts.length) {
+      table.insertAdjacentHTML('beforeend', scanAttemptRows(attempts));
+      scanReviewOffset += attempts.length;
+      message.textContent = `${scanReviewOffset} scan${scanReviewOffset === 1 ? '' : 's'} shown. Scans are cleared at midnight.`;
+      loadMore.classList.toggle('hidden', attempts.length < scanReviewPageSize);
+    } else if (scanReviewOffset === 0) {
+      table.innerHTML += emptyTableRow(3, 'No scans need review.', 'Rejected and unrecognized card scans appear here.');
+      message.textContent = 'Scans are cleared at midnight.';
+      loadMore.classList.add('hidden');
+    } else {
+      message.textContent = `All ${scanReviewOffset} scans are shown. Scans are cleared at midnight.`;
+      loadMore.classList.add('hidden');
+    }
+  } finally {
+    loadMore.disabled = false;
+  }
+}
+
+function closeScanReview() {
+  $('#scanReviewModal').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+  $('#viewAllScans').focus();
+}
+
+$('#viewAllScans').onclick = () => {
+  $('#scanReviewModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  loadScanReview().catch((error) => {
+    $('#scanReviewMsg').textContent = operationError(error, 'load scan reviews', 'try again.');
+    showOperationNotice(error, 'load scan reviews', 'try again.');
+  });
+  $('#closeScanReview').focus();
+};
+$('#closeScanReview').onclick = closeScanReview;
+$('#scanReviewModal').onclick = (event) => {
+  if (event.target === $('#scanReviewModal')) closeScanReview();
+};
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('#scanReviewModal').classList.contains('hidden')) {
+    closeScanReview();
+  }
+});
+$('#loadMoreScanReviews').onclick = () => loadScanReview(false).catch((error) => {
+  showOperationNotice(error, 'load more scan reviews', 'retry in a moment.');
+});
+
 $('#clearFeed').onclick = async () => {
-  if (!confirm('Permanently delete all live tap and scan-review entries? Attendance records will be kept.')) return;
+  const confirmed = await confirmDeletion({
+    title: 'Delete live scan feed?',
+    message: 'This permanently deletes all live taps and scan-review entries. Attendance records will be kept.',
+    confirmText: 'Delete feed',
+  });
+  if (!confirmed) return;
   const button = $('#clearFeed');
   button.disabled = true;
   $('#feedMsg').textContent = '';
   try {
     await api('/feed', { method: 'DELETE' });
     $('#feedMsg').textContent = 'All live taps and scan-review entries deleted. Attendance records were kept.';
+    showAccountToast('Live taps and scan-review entries were deleted. Attendance records were kept.');
     await loadOverview();
   } catch (err) {
     $('#feedMsg').textContent = err.status === 404
       ? 'This server does not support clearing scan logs yet. Restart the server with npm start, then reload this page.'
       : `Could not clear the feed: ${err.message}`;
+    showOperationNotice(err, 'clear the live scan feed', 'restart the server if the action is unsupported, or retry.');
   } finally {
     button.disabled = false;
-  }
-};
-
-$('#simBtn').onclick = async () => {
-  const id = Number($('#simStudent').value);
-  if (!id) return;
-  try {
-    const r = await api('/simulate', { method: 'POST', body: { student_id: id } });
-    const eventName = r.type ? r.type.replace('_', ' ') : '';
-    $('#simMsg').textContent = r.ok
-      ? `${r.student.name}: ${eventName}${r.status === 'late' ? ' LATE' : ''} at ${hhmm(r.time)}`
-      : r.code === 'DUPLICATE'
-      ? 'Already recorded'
-      : r.code === 'ALREADY_RECORDED'
-      ? 'Already recorded'
-      : r.message || 'Tap rejected: ' + r.code;
-    loadOverview();
-  } catch (e) {
-    $('#simMsg').textContent = e.message;
   }
 };
 
@@ -841,9 +1389,9 @@ $('#absentBtn').onclick = async () => {
   if (!confirm('Send configured absence notifications to opted-in parents of students with no tap today?')) return;
   try {
     const r = await api('/notify-absent', { method: 'POST' });
-    alert(`${r.checked} absent student(s) checked, ${r.sent} notification(s) sent to opted-in parents.`);
+    showAccountToast(`${r.checked} absent students checked; ${r.sent} notifications sent to opted-in parents.`);
   } catch (e) {
-    alert(e.message);
+    showOperationNotice(e, 'send absence notifications', 'check the notification settings and server configuration, then retry.');
   }
 };
 
@@ -864,7 +1412,14 @@ async function loadAttendance() {
            <td>${badge(s.morning_status, !r.schoolDay && s.morning_status === 'absent' ? 'no class' : s.morning_status)}</td>
            <td>${badge(s.afternoon_status, s.afternoon_status)}</td></tr>`
       )
-      .join('') || '<tr><td colspan="9" class="muted">No active students found for this section.</td></tr>');
+      .join('') || emptyTableRow(
+      9,
+      'No active students are included in this attendance view.',
+      $('#attClass').value
+        ? 'The selected section has no active student records to show.'
+        : 'No active students are enrolled, so there are no attendance rows for this date.',
+      'add-student'
+    ));
   $('#attTable').querySelectorAll('[data-monthly-attendance]').forEach((button) => {
     button.onclick = () => showStudentMonthlyAttendance(Number(button.dataset.monthlyAttendance));
   });
@@ -897,17 +1452,22 @@ async function showStudentMonthlyAttendance(studentId) {
       .join('');
     $('#studentAttendanceTable').innerHTML =
       '<tr><th>Date</th><th>Day</th><th>Morning in</th><th>Morning out</th><th>Afternoon in</th><th>Afternoon out</th><th>Status</th></tr>' +
-      report.days
+      (report.days.length ? report.days
         .map((day) =>
           `<tr><td>${esc(day.date)}</td><td>${esc(day.weekday)}</td>
            <td>${esc(hhmm(day.morning_in))}</td><td>${esc(hhmm(day.morning_out))}</td>
            <td>${esc(hhmm(day.afternoon_in))}</td><td>${esc(hhmm(day.afternoon_out))}</td>
            <td>${badge(day.status === 'present' ? 'present' : day.status === 'late' ? 'late' : day.status === 'half day' ? 'half-day' : day.status === 'absent' ? 'absent' : '', day.status)}</td></tr>`
         )
-        .join('');
+        .join('') : emptyTableRow(
+          7,
+          'No attendance days are available for this month.',
+          'This report only includes school days in the selected month.'
+        ));
   } catch (err) {
-    $('#studentAttendanceError').textContent = err.message;
+    $('#studentAttendanceError').textContent = operationError(err, 'load this monthly attendance report', 'retry the report or choose another month.');
     $('#studentAttendanceInfo').textContent = '';
+    showOperationNotice(err, 'load this monthly attendance report', 'retry the report or choose another month.');
   }
 }
 
@@ -931,7 +1491,9 @@ $('#attExport').onclick = () => {
   const month = ($('#attDate').value || '').slice(0, 7);
   const q = new URLSearchParams({ month });
   if ($('#attClass').value) q.set('cls', $('#attClass').value);
-  download('/export/sf2.csv?' + q, `sf2-${month}.csv`).catch((e) => alert(e.message));
+  download('/export/sf2.csv?' + q, `sf2-${month}.csv`)
+    .then(() => showAccountToast(`Attendance export for ${month} downloaded.`))
+    .catch((e) => showOperationNotice(e, 'download the attendance export', 'check your connection and retry.'));
 };
 
 // ---------- students ----------
@@ -963,6 +1525,7 @@ async function loadStudents() {
       event.preventDefault();
       showStudentDetails(Number(link.dataset.studentDetail), true).catch((error) => {
         $('#studentDetailsMsg').textContent = error.message;
+        showOperationNotice(error, 'open this student record', 'return to the Students list and open the record again.');
       });
     };
   });
@@ -977,9 +1540,12 @@ async function loadStudents() {
   $('#stuTable').querySelectorAll('[data-edit]').forEach((button) => {
     button.onclick = () => editStudent(Number(button.dataset.edit)).catch((error) => {
       $('#stuRemoveMsg').textContent = `Could not open student details: ${error.message}`;
+      showOperationNotice(error, 'open this student for editing', 'reload the student list and retry.');
     });
   });
-  $('#stuTable').querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => removeStudent(Number(b.dataset.del))));
+  $('#stuTable').querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => removeStudent(Number(b.dataset.del)).catch((error) => {
+    showOperationNotice(error, 'remove this student', 'reload the student list and retry.');
+  })));
   $('#markAllStudents').onclick = () => {
     for (const student of visibleStudents) selectedStudentIds.add(student.id);
     $('#stuTable').querySelectorAll('[data-select-student]').forEach((checkbox) => {
@@ -997,7 +1563,7 @@ async function loadStudents() {
   updateStudentSelection(visibleStudents);
   $('#toggleStudentMark').textContent = studentMarkMode ? 'Done marking' : 'Mark students';
   $('#studentMarkControls').classList.toggle('hidden', !studentMarkMode);
-  loadUnknown();
+  await loadUnknown();
 }
 
 async function showStudentDetails(id, updateUrl = false) {
@@ -1041,6 +1607,7 @@ $('#studentDetailsEdit').onclick = () => {
   closeStudentDetails(false);
   editStudent(id).catch((error) => {
     $('#stuRemoveMsg').textContent = `Could not open student details: ${error.message}`;
+    showOperationNotice(error, 'open this student for editing', 'reload the student list and retry.');
   });
 };
 
@@ -1054,18 +1621,28 @@ function updateStudentSelection(visibleStudents = students) {
 $('#toggleStudentMark').onclick = async () => {
   studentMarkMode = !studentMarkMode;
   if (!studentMarkMode) selectedStudentIds.clear();
-  await loadStudents();
+  try {
+    await loadStudents();
+  } catch (error) {
+    showOperationNotice(error, 'update the student selection', 'reload the Students tab and retry.');
+  }
 };
 
 $('#stuClassFilter').onchange = () => loadStudents().catch((err) => {
   $('#stuRemoveMsg').textContent = err.message;
+showOperationNotice(err, 'load the student list', 'check your connection and retry.');
 });
 
 $('#stuRemoveSelected').onclick = async () => {
   const selected = students.filter((s) => selectedStudentIds.has(s.id));
   if (!selected.length) return;
   const names = selected.map((s) => s.display_name || s.name).join(', ');
-  if (!confirm(`Remove ${selected.length} marked student(s)${selected.length <= 5 ? `: ${names}` : ''}? Their attendance history will be kept and their cards freed.`)) return;
+  const confirmed = await confirmDeletion({
+    title: `Remove ${selected.length} marked student${selected.length === 1 ? '' : 's'}?`,
+    message: `Selected: ${selected.length <= 5 ? names : `${names.slice(0, 180)}${names.length > 180 ? '…' : ''}`}. Attendance history will be kept and the students' cards will be freed.`,
+    confirmText: 'Remove students',
+  });
+  if (!confirmed) return;
   try {
     let removed;
     try {
@@ -1086,10 +1663,12 @@ $('#stuRemoveSelected').onclick = async () => {
     studentMarkMode = false;
     $('#stuRemoveMsg').className = 'muted';
     $('#stuRemoveMsg').textContent = `${removed} student(s) removed. Attendance history was kept.`;
+    showAccountToast(`${removed} student${removed === 1 ? '' : 's'} removed. Attendance history was kept.`);
     await loadStudents();
   } catch (err) {
     $('#stuRemoveMsg').className = 'err';
     $('#stuRemoveMsg').textContent = `${err.message}. Reload the student list and try again if the students are still active.`;
+    showOperationNotice(err, 'remove the selected students', 'reload the student list and try again.');
     await loadStudents().catch((refreshError) => {
       $('#stuRemoveMsg').textContent += ` The student list could not be refreshed: ${refreshError.message}`;
     });
@@ -1129,10 +1708,12 @@ async function startCardWatch() {
       } else if (scan.uid && scan.code !== 'UNKNOWN_CARD') {
         $('#sfMsg').className = 'err';
         $('#sfMsg').textContent = 'This RFID card is already registered. Contact the admin to update the RFID.';
+        showUserNotice('error', 'RFID card already registered', 'This card is assigned to another student. Ask an administrator to update the record.');
       }
     } catch (error) {
       $('#sfMsg').className = 'err';
       $('#sfMsg').textContent = `Could not check for a scanned RFID card: ${error.message}`;
+      showOperationNotice(error, 'check for a scanned RFID card', 'check your connection and retry card detection.');
     } finally {
       cardWatchInProgress = false;
     }
@@ -1153,6 +1734,7 @@ async function openUserStudentForm(rfidUid = '') {
   await startCardWatch();
   $('#sfClass').innerHTML = '<option value="">Choose a grade and section</option>' +
     userClasses.map((section) => `<option value="${section.grade}::${esc(section.section)}">${esc(clsLabel(section))}</option>`).join('');
+  enhanceSectionDropdown($('#sfClass'));
   $('#formTitle').textContent = 'Add student';
   $('#sfHelp').textContent = 'Choose a section already created by the admin. Existing student names and RFID cards cannot be changed here; contact the admin for updates.';
   $('#sfHelp').classList.remove('hidden');
@@ -1172,6 +1754,7 @@ async function openUserStudentForm(rfidUid = '') {
 
 function closeSectionForm() {
   $('#sectionFormPanel').classList.add('hidden');
+  clearFormValidation($('#sectionForm'));
   $('#sectionForm').reset();
   $('#sectionMsg').textContent = '';
   if ($('#stuFormPanel').classList.contains('hidden')) document.body.classList.remove('modal-open');
@@ -1190,17 +1773,30 @@ $('#sectionFormPanel').onclick = (event) => {
 };
 $('#sectionForm').onsubmit = async (event) => {
   event.preventDefault();
+  $('#sectionMsg').className = 'muted';
   $('#sectionMsg').textContent = '';
+  const grade = $('#sectionGrade').value;
+  const section = $('#sectionName').value.trim();
   try {
-    const grade = $('#sectionGrade').value;
-    const section = $('#sectionName').value.trim();
     await api('/classes', { method: 'POST', body: { grade, section } });
+  } catch (err) {
+    $('#sectionMsg').className = 'err';
+    $('#sectionMsg').textContent = operationError(err, 'save this section', 'check the section details and retry.');
+    showOperationNotice(err, 'save this section', 'check the section details and retry.');
+    if (err.status === 409) {
+      showFieldValidation($('#sectionName'), 'This grade and section already exists. Choose a different section name or grade.');
+    }
+    return;
+  }
+  closeSectionForm();
+  showUserNotice('success', 'Section saved', 'The section is available for enrollment.');
+  try {
     await refreshLookups();
     $('#stuClassFilter').value = `${grade}::${section}`;
-    closeSectionForm();
+    updateSectionDropdown($('#stuClassFilter'));
     await loadStudents();
-  } catch (err) {
-    $('#sectionMsg').textContent = err.message;
+  } catch (error) {
+    showOperationNotice(error, 'refresh the section list', 'retry by reopening the Students tab.');
   }
 };
 
@@ -1208,7 +1804,8 @@ $('#addStudentBtn').onclick = () => {
   clearForm();
   startCardWatch().then(showStudentForm).catch((error) => {
     $('#sfMsg').className = 'err';
-    $('#sfMsg').textContent = `Could not start RFID card detection: ${error.message}`;
+    $('#sfMsg').textContent = operationError(error, 'start RFID card detection', 'enter a card UID manually or retry card detection.');
+    showOperationNotice(error, 'start RFID card detection', 'enter a card UID manually or retry card detection.');
     showStudentForm();
   });
 };
@@ -1229,6 +1826,7 @@ async function editStudent(id) {
   $('#sfMiddleName').value = s.middle_name || '';
   $('#sfNameExtension').value = s.name_extension || '';
   $('#sfClass').value = `${s.grade}::${s.section}`;
+  updateSectionDropdown($('#sfClass'));
   $('#sfUid').value = details.rfid_uid || '';
   $('#sfParent').value = details.parent_name || '';
   $('#sfPhone').value = details.parent_phone || '';
@@ -1247,6 +1845,7 @@ function clearForm() {
   $('#formTitle').textContent = 'Add student';
   $('#sfHelp').classList.add('hidden');
   $('#unknownBox').classList.remove('hidden');
+  clearFormValidation($('#stuForm'));
   $('#stuForm').reset();
   $('#sfId').value = '';
   $('#sfMsg').className = 'err';
@@ -1268,10 +1867,16 @@ document.addEventListener('keydown', (e) => {
 
 async function removeStudent(id) {
   const s = students.find((x) => x.id === id);
-  if (!confirm(`Remove ${s ? s.name : 'this student'}? Their attendance history is kept and the card is freed.`)) return;
+  const confirmed = await confirmDeletion({
+    title: `Remove ${s ? s.name : 'this student'}?`,
+    message: 'Their attendance history will be kept and their card will be freed.',
+    confirmText: 'Remove student',
+  });
+  if (!confirmed) return;
   await api('/students/' + id, { method: 'DELETE' });
   clearForm();
-  loadStudents();
+  showAccountToast(`${s ? s.name : 'Student'} removed. Attendance history was kept.`);
+  await loadStudents();
 }
 
 $('#stuForm').onsubmit = async (e) => {
@@ -1296,15 +1901,29 @@ $('#stuForm').onsubmit = async (e) => {
     if (userAddMode) {
       await api('/user/students', { method: 'POST', body });
       clearForm();
-      $('#userStatus').textContent = 'Student added successfully. The student is now available to the admin.';
+      $('#userStatus').textContent = 'Student saved. The admin can now see the new record.';
+      showUserNotice('success', 'Student enrolled', 'The admin can now see the new record.');
       return;
     }
     await api(id ? '/students/' + id : '/students', { method: id ? 'PUT' : 'POST', body });
     clearForm();
-    loadStudents();
+    showUserNotice('success', id ? 'Student updated' : 'Student enrolled', id
+      ? 'The roster is up to date.'
+      : 'The student record is ready.');
+    loadStudents().catch(showLoadError);
   } catch (err) {
     $('#sfMsg').className = 'err';
-    $('#sfMsg').textContent = err.message;
+    $('#sfMsg').textContent = operationError(err, 'save this student', 'review the highlighted fields and submit again.');
+    showOperationNotice(err, 'save this student', 'review the highlighted fields and submit again.');
+    if (/LRN is required|LRN already exists|LRN or RFID/i.test(err.message)) {
+      showFieldValidation($('#sfLrn'), `${err.message}. Check the learner reference number and correct it, or ask the admin to review the existing record.`);
+    } else if (/RFID/i.test(err.message)) {
+      showFieldValidation($('#sfUid'), `${err.message}. Scan the correct card or ask the admin to release the existing card.`);
+    } else if (/parent email/i.test(err.message)) {
+      showFieldValidation($('#sfEmail'), `${err.message}. Enter a valid address or leave this optional field blank.`);
+    } else if (/section/i.test(err.message)) {
+      showFieldValidation($('#sfClass'), `${err.message}. Choose a section created by the admin.`);
+    }
     $('#sfMsg').classList.toggle(
       'student-enrollment-error',
       userAddMode && err.status === 409 && /already enrolled/i.test(err.message)
@@ -1338,13 +1957,22 @@ async function loadRisk() {
            <td>${r.reasons.length ? '<ul class="reasons">' + r.reasons.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<span class="muted">-</span>'}</td>
            <td>${esc(r.action)}</td></tr>`
       )
-      .join('') || '<tr><td colspan="8" class="muted">Nobody flagged right now.</td></tr>');
+      .join('') || emptyTableRow(
+      8,
+      all.length ? 'No students match this risk filter.' : 'There are no student records to assess.',
+      all.length
+        ? 'No students in the selected month meet the chosen risk level.'
+        : 'The report is empty because no attendance records are available for this month.',
+      all.length ? 'review-all-risk' : 'add-student'
+    ));
 }
 $('#riskFilter').onchange = () => loadRisk().then(clearLoadError).catch(showLoadError);
 $('#riskMonth').onchange = () => loadRisk().then(clearLoadError).catch(showLoadError);
 $('#riskExport').onclick = () => {
   const month = encodeURIComponent($('#riskMonth').value);
-  download(`/export/risk.csv?month=${month}`, `early-warning-${$('#riskMonth').value}.csv`).catch((e) => alert(e.message));
+  download(`/export/risk.csv?month=${month}`, `early-warning-${$('#riskMonth').value}.csv`)
+    .then(() => showAccountToast('Early-warning report downloaded.'))
+    .catch((e) => showOperationNotice(e, 'download the early-warning report', 'check your connection and retry.'));
 };
 
 // ---------- notifications ----------
@@ -1359,22 +1987,33 @@ async function loadNotifications() {
            <td>${esc(n.message)}</td>
            <td>${badge(String(n.status).startsWith('failed') ? 'failed' : 'sent', n.status)}<br><small class="muted">${esc(n.provider)}</small></td></tr>`
       )
-      .join('') || '<tr><td colspan="6" class="muted">No messages yet.</td></tr>');
+      .join('') || emptyTableRow(
+      6,
+      'No parent notifications have been logged.',
+      'The log stays empty until a notification is attempted.'
+    ));
 }
 
 $('#deleteAllSms').onclick = async () => {
-  if (!confirm('Permanently delete all notification log entries? This does not recall messages already sent.')) return;
+  const confirmed = await confirmDeletion({
+    title: 'Delete all notification logs?',
+    message: 'This permanently deletes every notification log entry. It does not recall messages that have already been sent.',
+    confirmText: 'Delete logs',
+  });
+  if (!confirmed) return;
   const button = $('#deleteAllSms');
   button.disabled = true;
   $('#smsDeleteMsg').textContent = '';
   try {
     const result = await api('/notifications', { method: 'DELETE' });
     $('#smsDeleteMsg').textContent = `${result.deleted} notification log entr${result.deleted === 1 ? 'y' : 'ies'} deleted.`;
+    showAccountToast(`${result.deleted} notification log entr${result.deleted === 1 ? 'y was' : 'ies were'} deleted.`);
     await loadNotifications();
   } catch (err) {
     $('#smsDeleteMsg').textContent = err.status === 404
       ? 'This server does not support deleting notification logs yet. Restart the server with npm start, then reload this page.'
       : `Could not delete notification logs: ${err.message}`;
+    showOperationNotice(err, 'delete notification logs', 'restart the server if this action is unsupported, or retry.');
   } finally {
     button.disabled = false;
   }
@@ -1406,14 +2045,103 @@ function updateThemeControl(darkModeEnabled) {
 
 updateThemeControl(document.documentElement.dataset.theme === 'dark');
 
-let accountToastTimer;
-function showAccountToast(message) {
-  const toast = $('#accountToast');
-  clearTimeout(accountToastTimer);
-  toast.textContent = message;
-  toast.classList.add('visible');
-  accountToastTimer = setTimeout(() => toast.classList.remove('visible'), 3500);
+let userNoticeTimer;
+function showUserNotice(type, title, message) {
+  const notice = $('#userNotice');
+  if (!$('#login').classList.contains('hidden') || !$('#adminRecovery').classList.contains('hidden')) {
+    clearTimeout(userNoticeTimer);
+    notice.classList.add('hidden');
+    return;
+  }
+  if (!notice.classList.contains('hidden') &&
+      notice.dataset.type === type &&
+      $('#userNoticeTitle').textContent === title &&
+      $('#userNoticeMessage').textContent === message) return;
+  clearTimeout(userNoticeTimer);
+  notice.dataset.type = type;
+  notice.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  notice.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+  notice.style.setProperty('--notice-duration', '3s');
+  $('#userNoticeIcon').textContent = type === 'success' ? '✓' : type === 'warning' ? '!' : type === 'error' ? '×' : 'i';
+  $('#userNoticeTitle').textContent = title;
+  $('#userNoticeMessage').textContent = message;
+  notice.classList.remove('hidden');
+  const progress = $('#userNoticeProgress');
+  progress.classList.remove('user-notice-progress-running');
+  void progress.offsetWidth;
+  progress.classList.add('user-notice-progress-running');
+  userNoticeTimer = setTimeout(() => notice.classList.add('hidden'), 3000);
 }
+function showAccountToast(message) {
+  showUserNotice('success', 'Success', message);
+}
+function showOperationNotice(error, operation, resolution) {
+  const title = error instanceof TypeError
+    ? 'Connection problem'
+    : error && error.status >= 500
+      ? 'Service problem'
+      : error && error.status === 403
+        ? 'Permission problem'
+        : error && error.status === 404
+          ? 'App version problem'
+          : 'Action could not be completed';
+  showUserNotice('error', title, operationError(error, operation, resolution));
+}
+
+function closeDeleteConfirmation(confirmed = false) {
+  const modal = $('#deleteConfirmModal');
+  if (modal.classList.contains('hidden')) return;
+  modal.classList.add('hidden');
+  $('#deleteConfirmPhrase').value = '';
+  $('#deleteConfirmError').textContent = '';
+  $('#deleteConfirmPhraseLabel').classList.add('hidden');
+  document.body.classList.remove('modal-open');
+  const resolve = pendingDeleteConfirmation;
+  pendingDeleteConfirmation = null;
+  resolve?.(confirmed);
+}
+
+function confirmDeletion({ title, message, confirmText = 'Delete', requiredPhrase = '' }) {
+  if (pendingDeleteConfirmation) closeDeleteConfirmation(false);
+  $('#deleteConfirmTitle').textContent = title;
+  $('#deleteConfirmMessage').textContent = message;
+  $('#confirmDeleteAction').textContent = confirmText;
+  $('#deleteConfirmPhraseLabel').classList.toggle('hidden', !requiredPhrase);
+  $('#deleteConfirmPhrase').value = '';
+  $('#deleteConfirmError').textContent = '';
+  $('#deleteConfirmModal').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  if (requiredPhrase) $('#deleteConfirmPhrase').focus();
+  else $('#confirmDeleteAction').focus();
+  return new Promise((resolve) => {
+    pendingDeleteConfirmation = resolve;
+  });
+}
+
+$('#confirmDeleteAction').onclick = () => {
+  const expected = $('#deleteConfirmPhraseLabel').classList.contains('hidden') ? '' : 'DELETE ALL';
+  if (expected && $('#deleteConfirmPhrase').value !== expected) {
+    $('#deleteConfirmError').textContent = 'Type DELETE ALL exactly to confirm. Nothing has been deleted yet.';
+    $('#deleteConfirmPhrase').focus();
+    return;
+  }
+  closeDeleteConfirmation(true);
+};
+$('#cancelDeleteAction').onclick = () => closeDeleteConfirmation(false);
+$('#deleteConfirmModal').onclick = (event) => {
+  if (event.target === $('#deleteConfirmModal')) closeDeleteConfirmation(false);
+};
+$('#deleteConfirmPhrase').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    $('#confirmDeleteAction').click();
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('#deleteConfirmModal').classList.contains('hidden')) {
+    closeDeleteConfirmation(false);
+  }
+});
 
 function closeAccountModal() {
   hidePasswordFields($('#accountModal'));
@@ -1455,6 +2183,7 @@ $('#openAccountModal').onclick = async () => {
   } catch (err) {
     message.className = 'err';
     message.textContent = `Could not load account names: ${err.message}`;
+    showOperationNotice(err, 'load account and recovery settings', 'check your connection and try opening account settings again.');
   }
 };
 
@@ -1490,6 +2219,7 @@ async function saveRecoverySettings(remove = false) {
   } catch (error) {
     message.className = 'err';
     message.textContent = error.message;
+    showOperationNotice(error, 'save password recovery settings', 'check the selected questions, answers, and current admin password.');
   } finally {
     button.disabled = false;
   }
@@ -1500,6 +2230,12 @@ $('#recoverySettingsForm').onsubmit = async (event) => {
   await saveRecoverySettings();
 };
 $('#clearRecoverySettings').onclick = async () => {
+  const confirmed = await confirmDeletion({
+    title: 'Remove password recovery questions?',
+    message: 'Admin password recovery will be disabled until new recovery questions are configured.',
+    confirmText: 'Remove questions',
+  });
+  if (!confirmed) return;
   await saveRecoverySettings(true);
 };
 
@@ -1511,6 +2247,29 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !$('#accountModal').classList.contains('hidden')) closeAccountModal();
 });
 
+const scheduleTimeFields = [
+  $('#morningLateTime'),
+  $('#morningEndTime'),
+  $('#afternoonLateTime'),
+  $('#afternoonEndTime'),
+];
+function updateScheduleOrderValidation() {
+  scheduleTimeFields.forEach((field) => field.setCustomValidity(''));
+  if (scheduleTimeFields.some((field) => !field.value || !field.validity.valid)) return;
+  const fieldNames = ['Morning late cutoff', 'Morning class finish', 'Afternoon late cutoff', 'Afternoon class finish'];
+  for (let index = 0; index < scheduleTimeFields.length - 1; index++) {
+    if (scheduleTimeFields[index].value >= scheduleTimeFields[index + 1].value) {
+      const field = scheduleTimeFields[index + 1];
+      field.setCustomValidity(`${fieldNames[index + 1]} must be later than ${fieldNames[index]}. Choose a later time.`);
+      if (field.getAttribute('aria-invalid') === 'true') showFieldValidation(field);
+      return;
+    }
+  }
+  scheduleTimeFields.forEach(clearFieldValidation);
+}
+scheduleTimeFields.forEach((field) => field.addEventListener('input', updateScheduleOrderValidation));
+scheduleTimeFields.forEach((field) => field.addEventListener('change', updateScheduleOrderValidation));
+
 async function loadSettings() {
   settings = await api('/settings');
   $('#setName').value = settings.school_name;
@@ -1521,6 +2280,7 @@ async function loadSettings() {
   $('#setDebounce').value = settings.debounce_sec;
   $('#setNotify').checked = settings.notify_enabled === '1';
   $('#setEmailNotify').checked = settings.email_notify_enabled === '1';
+  updateScheduleOrderValidation();
   const hols = await api('/holidays');
   $('#holTable').innerHTML =
     hols
@@ -1528,17 +2288,33 @@ async function loadSettings() {
         (h) =>
           `<tr><td>${esc(h.date)}</td><td>${esc(h.name)}</td><td><button class="small ghost" data-hol="${esc(h.date)}">Remove</button></td></tr>`
       )
-      .join('') || '<tr><td class="muted">None yet.</td></tr>';
+      .join('') || `<tr><td colspan="3">${emptyState(
+      'No holidays or suspensions are listed.',
+      'Weekends are skipped automatically; dates not listed may be treated as school days.'
+    )}</td></tr>`;
   $('#holTable').querySelectorAll('[data-hol]').forEach((b) => {
     b.onclick = async () => {
-      await api('/holidays/' + b.dataset.hol, { method: 'DELETE' });
-      loadSettings();
+      const confirmed = await confirmDeletion({
+        title: `Remove no-class day ${b.dataset.hol}?`,
+        message: 'This date will be treated as a school day again and may count toward attendance.',
+        confirmText: 'Remove date',
+      });
+      if (!confirmed) return;
+      try {
+        await api('/holidays/' + b.dataset.hol, { method: 'DELETE' });
+        showAccountToast('No-class day removed. Attendance will count that date as a school day again.');
+        await loadSettings();
+      } catch (error) {
+        showOperationNotice(error, 'remove this no-class day', 'reload Settings and retry.');
+      }
     };
   });
 }
 
 $('#setForm').onsubmit = async (e) => {
   e.preventDefault();
+  $('#setMsg').className = 'muted';
+  $('#setMsg').textContent = '';
   try {
     settings = await api('/settings', {
       method: 'PUT',
@@ -1554,9 +2330,20 @@ $('#setForm').onsubmit = async (e) => {
       },
     });
     $('#schoolName').textContent = settings.school_name;
-    $('#setMsg').textContent = 'Saved.';
+    $('#setMsg').textContent = 'Settings saved. Your schedule and notification preferences are updated.';
+    showAccountToast('Settings saved. Your schedule and notification preferences are updated.');
   } catch (err) {
-    $('#setMsg').textContent = err.message;
+    $('#setMsg').className = 'err';
+    $('#setMsg').textContent = operationError(err, 'save settings', 'check the highlighted schedule times and retry.');
+    showOperationNotice(err, 'save settings', 'check the highlighted schedule times and retry.');
+    if (/Times must be ordered/.test(err.message)) {
+      updateScheduleOrderValidation();
+      const field = scheduleTimeFields.find((control) => control.validity.customError);
+      if (field) {
+        showFieldValidation(field, field.validationMessage);
+        field.focus();
+      }
+    }
   }
 };
 
@@ -1586,19 +2373,22 @@ $('#accountForm').onsubmit = async (e) => {
     $('#adminNewPassword').value = '';
     $('#userNewPassword').value = '';
     closeAccountModal();
-    showAccountToast('Account changes saved.');
+    showAccountToast('Account changes saved. Your new sign-in details are active.');
   } catch (err) {
     message.className = 'err';
-    message.textContent = err.message;
+    message.textContent = operationError(err, 'save account changes', 'check the account details and try again.');
+    showOperationNotice(err, 'save account changes', 'check the account details and try again.');
   }
 };
 
 $('#clearAllData').onclick = async () => {
-  if (!confirm('This permanently erases all saved records, including notification logs, previous account credentials, and settings from the database. Admin/user accounts will be recreated using configured credentials and settings will return to defaults. This cannot be undone. Continue?')) return;
-  if (prompt('Type DELETE ALL to confirm permanently erasing all saved data.') !== 'DELETE ALL') {
-    $('#clearAllDataMsg').textContent = 'Data clearing cancelled.';
-    return;
-  }
+  const confirmed = await confirmDeletion({
+    title: 'Permanently delete all saved data?',
+    message: 'This erases all students, attendance, taps, notification logs, unknown cards, holidays, settings, and saved account credentials. Configured accounts will be recreated and settings will return to defaults. This cannot be undone.',
+    confirmText: 'Delete all data',
+    requiredPhrase: 'DELETE ALL',
+  });
+  if (!confirmed) return;
 
   const button = $('#clearAllData');
   button.disabled = true;
@@ -1627,6 +2417,7 @@ $('#clearAllData').onclick = async () => {
     selectedStudentIds.clear();
     const notificationCount = Number(result.deleted.notifications) || 0;
     $('#clearAllDataMsg').textContent = `All saved data erased (${total} records), including ${notificationCount} notification log entr${notificationCount === 1 ? 'y' : 'ies'}. Accounts were reset to configured credentials and settings returned to defaults.`;
+    showAccountToast(`All saved data erased (${total} records). Accounts and settings were reset to configured defaults.`);
     await Promise.all([
       loadOverview(),
       loadAttendance(),
@@ -1638,6 +2429,7 @@ $('#clearAllData').onclick = async () => {
   } catch (err) {
     $('#clearAllDataMsg').className = 'err';
     $('#clearAllDataMsg').textContent = `Could not clear saved data: ${err.message}`;
+    showOperationNotice(err, 'clear saved data', 'check the server connection and retry only if you still intend to erase all records.');
   } finally {
     button.disabled = false;
   }
@@ -1645,12 +2437,18 @@ $('#clearAllData').onclick = async () => {
 
 $('#holForm').onsubmit = async (e) => {
   e.preventDefault();
+  $('#holMsg').className = 'muted';
+  $('#holMsg').textContent = '';
   try {
     await api('/holidays', { method: 'POST', body: { date: $('#holDate').value, name: $('#holName').value } });
     $('#holForm').reset();
-    loadSettings();
+    $('#holMsg').textContent = 'No-class day saved. It will be excluded from school-day attendance calculations.';
+    showAccountToast('No-class day saved and excluded from attendance calculations.');
+    loadSettings().catch(showLoadError);
   } catch (err) {
-    alert(err.message);
+    $('#holMsg').className = 'err';
+    $('#holMsg').textContent = operationError(err, 'save this no-class day', 'check the date and retry.');
+    showOperationNotice(err, 'save this no-class day', 'check the date and retry.');
   }
 };
 

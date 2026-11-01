@@ -480,12 +480,13 @@ const displayStudentName = (student) =>
     : student.name;
 
 app.get('/api/user/latest', async (req, res) => {
+  await cleanupExpiredScanLogs();
   const afterId = Number(req.query.after) || 0;
   const attemptAfterId = Number(req.query.attempt_after) || 0;
   const afternoonLateTime = await getSetting('afternoon_late_time');
   const [latestScan, latestAttempt, scanCursor, attemptCursor] = await Promise.all([
     db.prepare(
-      `SELECT sc.id AS scan_id,s.name,s.grade,s.section,s.surname,s.first_name,
+      `SELECT sc.id AS scan_id,s.name,s.lrn,s.grade,s.section,s.surname,s.first_name,
               s.middle_name,s.name_extension,sc.date,sc.ts,sc.type,
               CASE
                 WHEN sc.type='MORNING_IN' THEN
@@ -990,8 +991,35 @@ app.get('/api/unknown', async (req, res) =>
 );
 
 // ---------- live data ----------
+let scanLogCleanupPromise = null;
+let lastScanLogCleanupDate = '';
+function millisecondsUntilManilaMidnight() {
+  const { date } = nowManila();
+  const nextDate = new Date(`${date}T00:00:00Z`);
+  nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+  return Math.max(1, nextDate.getTime() - 8 * 60 * 60 * 1000 - Date.now());
+}
+async function cleanupExpiredScanLogs() {
+  if (scanLogCleanupPromise) return scanLogCleanupPromise;
+  const { date } = nowManila();
+  if (lastScanLogCleanupDate === date) return;
+  scanLogCleanupPromise = Promise.all([
+    db.prepare('DELETE FROM scans WHERE date<?').run(date),
+    db.prepare('DELETE FROM scan_attempts WHERE date<?').run(date),
+  ]).then(() => { lastScanLogCleanupDate = date; });
+  try {
+    await scanLogCleanupPromise;
+  } finally {
+    scanLogCleanupPromise = null;
+  }
+}
+
 app.get('/api/feed', async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 25, 100);
+  await cleanupExpiredScanLogs();
+  const requestedLimit = Math.floor(Number(req.query.limit)) || 25;
+  const requestedOffset = Number(req.query.offset);
+  const limit = Math.max(1, Math.min(requestedLimit, 100));
+  const offset = Number.isSafeInteger(requestedOffset) && requestedOffset > 0 ? requestedOffset : 0;
   const afternoonLateTime = await getSetting('afternoon_late_time');
   res.json(
     await db
@@ -1006,20 +1034,24 @@ app.get('/api/feed', async (req, res) => {
          FROM scans sc
          JOIN students s ON s.id=sc.student_id
          LEFT JOIN attendance a ON a.student_id=sc.student_id AND a.date=sc.date
-         ORDER BY sc.ts DESC, sc.id DESC LIMIT ?`
+         ORDER BY sc.ts DESC, sc.id DESC LIMIT ? OFFSET ?`
       )
-      .all(afternoonLateTime, afternoonLateTime, limit)
+      .all(afternoonLateTime, afternoonLateTime, limit, offset)
   );
 });
 
 app.get('/api/scan-attempts', async (req, res) => {
-  const limit = Math.min(Number(req.query.limit) || 25, 100);
+  await cleanupExpiredScanLogs();
+  const requestedLimit = Math.floor(Number(req.query.limit)) || 25;
+  const requestedOffset = Number(req.query.offset);
+  const limit = Math.max(1, Math.min(requestedLimit, 100));
+  const offset = Number.isSafeInteger(requestedOffset) && requestedOffset > 0 ? requestedOffset : 0;
   res.json(await db.prepare(
     `SELECT a.id,a.ts,a.date,a.code,a.message,a.expected_type,s.name,s.grade,s.section
      FROM scan_attempts a
      LEFT JOIN students s ON s.id=a.student_id
-     ORDER BY a.ts DESC,a.id DESC LIMIT ?`
-  ).all(limit));
+     ORDER BY a.ts DESC,a.id DESC LIMIT ? OFFSET ?`
+  ).all(limit, offset));
 });
 
 app.delete('/api/feed', async (req, res) => {
@@ -1170,13 +1202,6 @@ app.get('/api/students/:id/attendance', async (req, res) => {
 });
 
 // ---------- actions ----------
-app.post('/api/simulate', async (req, res) => {
-  const s = await db.prepare('SELECT rfid_uid FROM students WHERE id=? AND active=1').get(req.body.student_id);
-  if (!s || !s.rfid_uid) return res.status(400).json({ error: 'Student has no RFID card assigned' });
-  const r = await processTap(s.rfid_uid);
-  res.status(200).json(r);
-});
-
 app.post('/api/notify-absent', async (req, res) => {
   const { date } = nowManila();
   if (!await isSchoolDay(date)) return res.status(400).json({ error: 'Today is not a school day' });
@@ -1322,6 +1347,17 @@ app.use((error, req, res, next) => {
 
 if (require.main === module) {
   appReady.then(() => {
+    const scheduleScanCleanup = () => {
+      const scanCleanupTimer = setTimeout(() => {
+        cleanupExpiredScanLogs()
+          .catch((error) => console.error('Failed to clean up expired scans:', error))
+          .finally(scheduleScanCleanup);
+      }, millisecondsUntilManilaMidnight());
+      scanCleanupTimer.unref();
+    };
+    cleanupExpiredScanLogs()
+      .catch((error) => console.error('Failed to clean up expired scans:', error))
+      .finally(scheduleScanCleanup);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`RFID attendance running on http://localhost:${PORT}`);
     });

@@ -8,6 +8,15 @@
 </head>
 <body>
 
+<section id="userNotice" class="user-notice hidden" role="status" aria-live="polite">
+  <span id="userNoticeIcon" class="user-notice-icon" aria-hidden="true"></span>
+  <div class="user-notice-copy">
+    <strong id="userNoticeTitle"></strong>
+    <p id="userNoticeMessage"></p>
+  </div>
+  <span id="userNoticeProgress" class="user-notice-progress" aria-hidden="true"></span>
+</section>
+
 <div id="login" class="login hidden">
   <aside class="login-welcome">
     <p class="login-welcome-school">Tampilisan National High School</p>
@@ -24,7 +33,7 @@
       </div>
     </div>
     <p class="muted">Log In</p>
-    <input id="email" type="text" inputmode="email" maxlength="254" placeholder="Email address" aria-label="Email address" autocomplete="email" required>
+    <input id="email" type="email" maxlength="254" placeholder="Email address" aria-label="Email address" autocomplete="email" required>
     <div class="password-field">
       <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
       <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
@@ -55,7 +64,7 @@
     <h1 id="recoveryTitle">Reset admin password</h1>
     <p class="muted">Answer the recovery questions configured by the admin.</p>
     <form id="recoveryLookupForm" class="form">
-      <label>Admin email address <input id="recoveryEmail" type="text" inputmode="email" maxlength="254" autocomplete="email" required></label>
+      <label>Admin email address <input id="recoveryEmail" type="email" maxlength="254" autocomplete="email" required></label>
       <button type="submit">Continue</button>
     </form>
     <form id="recoveryResetForm" class="form hidden">
@@ -115,15 +124,27 @@
   </header>
   <main>
     <section class="panel user-screen">
-      <h2>Student scan</h2>
+      <h2 id="userScreenTitle">Student scan</h2>
       <p id="userStatus" class="muted" role="status">Waiting for an NFC card tap...</p>
+      <div id="userLoadingPreview" class="detail-skeleton hidden" aria-hidden="true">
+        <span class="skeleton-block skeleton-heading"></span>
+        <span class="skeleton-block skeleton-row"></span>
+        <span class="skeleton-block skeleton-row"></span>
+      </div>
+      <button id="retryUserConnection" class="ghost hidden" type="button">Retry connection</button>
       <div id="userStudentDetails" class="hidden">
-        <h3 id="userStudentName"></h3>
-        <dl class="student-details">
-          <div><dt>Grade / section</dt><dd id="userGradeSection"></dd></div>
-          <div id="userTapResultBox"><dt>Tap result</dt><dd id="userTapResult"></dd></div>
-          <div><dt>Time</dt><dd id="userTapTime"></dd></div>
-        </dl>
+        <div class="user-student-identity">
+          <h3 id="userStudentName"></h3>
+          <p id="userGradeSection"></p>
+          <p id="userStudentLrn"></p>
+        </div>
+        <div id="userTapResultBox" class="user-scan-result" role="status">
+          <svg class="user-scan-result-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m5 12 4.5 4.5L19 7"></path>
+          </svg>
+          <strong id="userTapResult"></strong>
+          <span id="userTapTime"></span>
+        </div>
       </div>
     </section>
   </main>
@@ -170,9 +191,16 @@
   </header>
 
   <main>
-    <p id="loadError" class="err hidden" role="alert"></p>
+    <section id="loadError" class="load-error hidden" role="alert" aria-live="assertive">
+      <div>
+        <h2 id="loadErrorTitle">We couldn't load this page</h2>
+        <p id="loadErrorMessage"></p>
+        <p id="loadErrorCause" class="muted"></p>
+      </div>
+      <button id="retryTabLoad" type="button">Retry</button>
+    </section>
     <div id="tabLoading" class="tab-loading hidden" role="status" aria-live="polite">
-      <span id="tabLoadingMessage" class="visually-hidden">Loading...</span>
+      <p id="tabLoadingMessage" class="loading-message"></p>
       <div id="loadingSkeleton" class="loading-skeleton" aria-hidden="true"></div>
     </div>
     <!-- Overview -->
@@ -189,21 +217,16 @@
           <p id="feedMsg" class="muted" role="status"></p>
         </div>
         <div class="panel">
-          <h2>Scans to review</h2>
+          <div class="row">
+            <h2>Scans to review</h2>
+            <button id="viewAllScans" type="button" class="small ghost">View All</button>
+          </div>
           <table id="scanAttemptsTable"></table>
         </div>
         <div>
           <div class="panel">
             <h2>By section</h2>
             <table id="byClass"></table>
-          </div>
-          <div class="panel">
-            <h2>Test without hardware</h2>
-            <div class="row">
-              <select id="simStudent"></select>
-              <button id="simBtn">Simulate tap</button>
-            </div>
-            <p id="simMsg" class="muted"></p>
           </div>
           <div class="panel">
             <h2>Absence notices</h2>
@@ -213,6 +236,20 @@
         </div>
       </div>
     </section>
+
+    <!-- Scan review overlay -->
+    <div id="scanReviewModal" class="student-modal scan-review-modal hidden" role="dialog" aria-modal="true" aria-labelledby="scanReviewTitle">
+      <section class="panel student-modal-panel scan-review-panel">
+        <div class="row">
+          <h2 id="scanReviewTitle">All scans to review</h2>
+          <button id="closeScanReview" type="button" class="ghost" aria-label="Close scan review">Close</button>
+        </div>
+        <p class="muted">Scans are cleared at midnight.</p>
+        <p id="scanReviewMsg" class="muted" role="status"></p>
+        <table id="scanReviewTable"></table>
+        <button id="loadMoreScanReviews" type="button" class="ghost hidden">Load more</button>
+      </section>
+    </div>
 
     <!-- Attendance -->
     <section id="tab-attendance" class="tab hidden">
@@ -232,7 +269,20 @@
           </div>
           <p id="studentAttendanceInfo" class="muted"></p>
           <p id="studentAttendanceFullName" class="muted"></p>
-          <p id="studentAttendanceError" class="err" role="status"></p>
+          <p id="studentAttendanceError" class="err" role="alert"></p>
+          <button id="retryStudentAttendance" class="ghost hidden" type="button">Retry attendance report</button>
+          <div id="studentAttendanceLoading" class="report-loading hidden" aria-hidden="true">
+            <div class="skeleton-cards">
+              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
+            </div>
+            <div class="skeleton-panel skeleton-table">
+              <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+              <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+            </div>
+          </div>
           <div id="studentAttendanceSummary" class="cards"></div>
           <table id="studentAttendanceTable"></table>
         </div>
@@ -347,7 +397,7 @@
             <label class="check"><input id="setEmailNotify" type="checkbox"> Send parent email on tap</label>
             <p class="muted">Each channel sends only to parents with a contact address and recorded consent. Email requires Resend configuration on the server.</p>
             <button type="submit">Save settings</button>
-            <p id="setMsg" class="muted"></p>
+            <p id="setMsg" class="muted" role="status"></p>
           </form>
         </div>
         <div class="panel">
@@ -358,6 +408,7 @@
             <input id="holName" placeholder="Name (e.g. Class suspension)">
             <button type="submit">Add</button>
           </form>
+          <p id="holMsg" class="muted" role="status"></p>
           <table id="holTable"></table>
         </div>
         <div class="panel">
@@ -365,16 +416,19 @@
           <p class="muted">Manage admin and user sign-in credentials and configure admin password recovery.</p>
           <button id="openAccountModal" type="button">Manage account</button>
         </div>
-        <div class="panel">
-          <h2>Clear all saved data</h2>
-          <p class="muted">Permanently erases all saved students, attendance, taps, notification logs, unknown cards, holidays, settings, and saved account credentials, including old database pages. The database is compacted and its write-ahead log cleared. Admin/user accounts are recreated from configured environment credentials; settings return to defaults.</p>
-          <button id="clearAllData" class="small danger">Delete all saved data</button>
-          <p id="clearAllDataMsg" class="muted" role="status"></p>
+        <div class="panel danger-panel">
+          <div class="danger-panel-content">
+            <h2>Clear all saved data</h2>
+            <p class="muted">Permanently erases all saved students, attendance, taps, notification logs, unknown cards, holidays, settings, and saved account credentials, including old database pages. The database is compacted and its write-ahead log cleared. Admin/user accounts are recreated from configured environment credentials; settings return to defaults.</p>
+            <p id="clearAllDataMsg" class="muted" role="status"></p>
+          </div>
+          <div class="danger-panel-actions">
+            <button id="clearAllData" class="danger">Delete all saved data</button>
+          </div>
         </div>
       </div>
     </section>
   </main>
-  <div id="accountToast" class="account-toast" role="status" aria-live="polite"></div>
   <div id="accountModal" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
     <section class="panel student-modal-panel account-modal-panel">
       <div class="row">
@@ -460,7 +514,7 @@
               <option value="memorable_place">What was the name of a place important to your childhood?</option>
             </select>
           </label>
-          <label>Answer 1 <input id="recoverySettingsAnswer1" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer"></label>
+          <label>Answer 1 <input id="recoverySettingsAnswer1" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer" required></label>
           <label>Recovery question 2
             <select id="recoveryQuestionSelect2" required>
               <option value="">Choose a question</option>
@@ -472,7 +526,7 @@
               <option value="memorable_place">What was the name of a place important to your childhood?</option>
             </select>
           </label>
-          <label>Answer 2 <input id="recoverySettingsAnswer2" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer"></label>
+          <label>Answer 2 <input id="recoverySettingsAnswer2" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer" required></label>
           <label>Confirm with current admin password
             <input id="recoverySettingsCurrentPassword" type="password" autocomplete="current-password" required>
           </label>
@@ -491,18 +545,41 @@
       <h2 id="studentDetailsTitle">Student details</h2>
       <button id="studentDetailsClose" type="button" class="ghost" aria-label="Close student details">Close</button>
     </div>
-    <dl class="student-details">
-      <div><dt>LRN</dt><dd id="studentDetailsLrn"></dd></div>
-      <div><dt>Grade / section</dt><dd id="studentDetailsSection"></dd></div>
-      <div><dt>RFID card</dt><dd id="studentDetailsCard"></dd></div>
-      <div><dt>Parent / guardian</dt><dd id="studentDetailsParent"></dd></div>
-      <div><dt>Parent mobile</dt><dd id="studentDetailsPhone"></dd></div>
-      <div><dt>SMS consent</dt><dd id="studentDetailsConsent"></dd></div>
-      <div><dt>Parent email</dt><dd id="studentDetailsEmail"></dd></div>
-      <div><dt>Email consent</dt><dd id="studentDetailsEmailConsent"></dd></div>
-    </dl>
     <p id="studentDetailsMsg" class="muted" role="status"></p>
-    <button id="studentDetailsEdit" type="button">Edit student</button>
+    <div id="studentDetailsLoading" class="detail-skeleton hidden" aria-hidden="true">
+      <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+      <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+      <span class="skeleton-block skeleton-row"></span>
+    </div>
+    <div id="studentDetailsBody">
+      <dl class="student-details">
+        <div><dt>LRN</dt><dd id="studentDetailsLrn"></dd></div>
+        <div><dt>Grade / section</dt><dd id="studentDetailsSection"></dd></div>
+        <div><dt>RFID card</dt><dd id="studentDetailsCard"></dd></div>
+        <div><dt>Parent / guardian</dt><dd id="studentDetailsParent"></dd></div>
+        <div><dt>Parent mobile</dt><dd id="studentDetailsPhone"></dd></div>
+        <div><dt>SMS consent</dt><dd id="studentDetailsConsent"></dd></div>
+        <div><dt>Parent email</dt><dd id="studentDetailsEmail"></dd></div>
+        <div><dt>Email consent</dt><dd id="studentDetailsEmailConsent"></dd></div>
+      </dl>
+      <button id="studentDetailsEdit" type="button">Edit student</button>
+    </div>
+    <button id="studentDetailsRetry" class="ghost hidden" type="button">Retry loading details</button>
+  </section>
+</div>
+
+<div id="deleteConfirmModal" class="student-modal confirmation-modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage">
+  <section class="panel student-modal-panel confirmation-panel">
+    <h2 id="deleteConfirmTitle">Confirm deletion</h2>
+    <p id="deleteConfirmMessage" class="muted"></p>
+    <label id="deleteConfirmPhraseLabel" class="hidden">Type DELETE ALL to confirm
+      <input id="deleteConfirmPhrase" autocomplete="off" spellcheck="false">
+    </label>
+    <p id="deleteConfirmError" class="err" role="alert"></p>
+    <div class="row confirmation-actions">
+      <button id="confirmDeleteAction" class="danger" type="button">Delete</button>
+      <button id="cancelDeleteAction" class="ghost" type="button">Cancel</button>
+    </div>
   </section>
 </div>
 
@@ -515,7 +592,7 @@
     <p id="sfHelp" class="muted hidden"></p>
     <form id="stuForm" class="form">
       <input type="hidden" id="sfId">
-      <label required>LRN <input id="sfLrn" maxlength="12" placeholder="12-digit LRN" required></label>
+      <label required>LRN <input id="sfLrn" maxlength="12" inputmode="numeric" pattern="[0-9]{12}" data-validation-help="Enter the 12-digit LRN printed on the student's school record." placeholder="12-digit LRN" required></label>
       <label required>Surname <input id="sfSurname" maxlength="100" required></label>
       <label required>First name <input id="sfFirstName" maxlength="100" required></label>
       <label>Middle name <input id="sfMiddleName" maxlength="100"></label>

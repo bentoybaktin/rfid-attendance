@@ -85,6 +85,40 @@ test('security headers, role-based access, and login rate limit', async () => {
     });
     assert.equal(studentResponse.status, 200);
     const student = await studentResponse.json();
+    const manilaDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const yesterday = new Date(`${manilaDate}T00:00:00Z`);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const expiredDate = yesterday.toISOString().slice(0, 10);
+    const expiredScanTime = `${expiredDate}T23:59:00`;
+    const recentScanTime = `${manilaDate}T00:01:00`;
+    const secondRecentScanTime = `${manilaDate}T00:02:00`;
+    await db.prepare('INSERT INTO scans(student_id,uid,ts,date,type) VALUES(?,?,?,?,?)')
+      .run(student.id, null, expiredScanTime, expiredScanTime.slice(0, 10), 'MORNING_IN');
+    await db.prepare('INSERT INTO scans(student_id,uid,ts,date,type) VALUES(?,?,?,?,?)')
+      .run(student.id, null, recentScanTime, recentScanTime.slice(0, 10), 'MORNING_IN');
+    await db.prepare('INSERT INTO scans(student_id,uid,ts,date,type) VALUES(?,?,?,?,?)')
+      .run(student.id, null, secondRecentScanTime, secondRecentScanTime.slice(0, 10), 'MORNING_OUT');
+    await db.prepare('INSERT INTO scan_attempts(student_id,uid,ts,date,code,message) VALUES(?,?,?,?,?,?)')
+      .run(student.id, null, expiredScanTime, expiredScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Expired attempt');
+    await db.prepare('INSERT INTO scan_attempts(student_id,uid,ts,date,code,message) VALUES(?,?,?,?,?,?)')
+      .run(student.id, null, recentScanTime, recentScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Recent attempt');
+    await db.prepare('INSERT INTO scan_attempts(student_id,uid,ts,date,code,message) VALUES(?,?,?,?,?,?)')
+      .run(student.id, null, secondRecentScanTime, secondRecentScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Second recent attempt');
+    await db.prepare('INSERT INTO attendance(student_id,date,status) VALUES(?,?,?)')
+      .run(student.id, expiredScanTime.slice(0, 10), 'present');
+    const retainedFeed = await request('/api/feed?limit=4', { headers: adminHeaders });
+    assert.deepEqual((await retainedFeed.json()).map((scan) => scan.ts), [secondRecentScanTime, recentScanTime]);
+    const retainedAttempts = await request('/api/scan-attempts?limit=1&offset=0', { headers: adminHeaders });
+    assert.deepEqual((await retainedAttempts.json()).map((attempt) => attempt.message), ['Second recent attempt']);
+    const attemptPageTwo = await request('/api/scan-attempts?limit=1&offset=1', { headers: adminHeaders });
+    assert.deepEqual((await attemptPageTwo.json()).map((attempt) => attempt.message), ['Recent attempt']);
+    const retainedAttendance = await db.prepare('SELECT status FROM attendance WHERE student_id=? AND date=?')
+      .get(student.id, expiredDate);
+    assert.equal(retainedAttendance.status, 'present');
+    assert.equal(await db.prepare('SELECT id FROM scans WHERE student_id=? AND date=?')
+      .get(student.id, expiredDate), undefined);
+    assert.equal(await db.prepare('SELECT id FROM scan_attempts WHERE student_id=? AND date=?')
+      .get(student.id, expiredDate), undefined);
     const studentDetailsResponse = await request(`/api/students/${student.id}`, {
       headers: adminHeaders,
     });
