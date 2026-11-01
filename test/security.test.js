@@ -85,15 +85,16 @@ test('security headers, role-based access, and login rate limit', async () => {
     });
     assert.equal(studentResponse.status, 200);
     const student = await studentResponse.json();
-    assert.equal(student.id, null);
+    assert.ok(Number.isSafeInteger(student.id));
     assert.equal(student.student_ref, null);
     assert.match(student.student_key, /^[A-Za-z0-9_-]+$/);
     const internalStudent = await db.prepare('SELECT id FROM students WHERE lrn=?').get('123456789012');
     const studentListResponse = await request('/api/students', { headers: adminHeaders });
     const listedStudents = await studentListResponse.json();
-    assert.ok(listedStudents.every((listedStudent) => listedStudent.id === null));
+    assert.ok(listedStudents.every((listedStudent) => Number.isSafeInteger(listedStudent.id)));
     const listedStudent = listedStudents.find((listed) => listed.student_key);
     assert.ok(listedStudent);
+    assert.equal(listedStudent.id, internalStudent.id);
     assert.equal(listedStudent.student_ref, null);
     assert.equal(listedStudent.name, 'Test, Email');
     assert.equal(listedStudent.display_name, 'Test, Email');
@@ -103,7 +104,9 @@ test('security headers, role-based access, and login rate limit', async () => {
     const manilaDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const attendanceListResponse = await request(`/api/attendance?date=${manilaDate}`, { headers: adminHeaders });
     const attendanceList = await attendanceListResponse.json();
-    assert.ok(attendanceList.rows.every((row) => row.id === null && row.student_ref === null && row.student_key));
+    assert.ok(attendanceList.rows.every((row) =>
+      Number.isSafeInteger(row.id) && row.student_ref === null && row.student_key
+    ));
     const yesterday = new Date(`${manilaDate}T00:00:00Z`);
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     const expiredDate = yesterday.toISOString().slice(0, 10);
@@ -141,7 +144,7 @@ test('security headers, role-based access, and login rate limit', async () => {
       headers: adminHeaders,
     });
     const studentDetails = await studentDetailsResponse.json();
-    assert.equal(studentDetails.id, null);
+    assert.equal(studentDetails.id, internalStudent.id);
     assert.equal(studentDetails.parent_email, 'guardian@example.com');
     assert.equal(studentDetails.email_consent, 1);
     assert.equal((await request('/api/students/1', { headers: adminHeaders })).status, 400);
@@ -150,7 +153,7 @@ test('security headers, role-based access, and login rate limit', async () => {
       { headers: adminHeaders }
     );
     assert.equal(monthlyAttendanceResponse.status, 200);
-    assert.equal((await monthlyAttendanceResponse.json()).student.id, null);
+    assert.equal((await monthlyAttendanceResponse.json()).student.id, internalStudent.id);
 
     const unknownUid = 'A1B2C3D4';
     const unknownTap = await request('/api/tap', {

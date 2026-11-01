@@ -826,7 +826,7 @@ app.get('/api/students', async (req, res) =>
   ).all())
     .map((student) => {
       return {
-        id: null,
+        id: student.id,
         student_ref: null,
         student_key: encodeStudentRef(student.id),
         name: student.name,
@@ -916,7 +916,11 @@ app.post('/api/user/students', async (req, res) => {
        RETURNING id`
     ).get(s);
     if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
-    res.status(201).json({ id: null, student_ref: null, student_key: encodeStudentRef(Number(result.id)) });
+    res.status(201).json({
+      id: Number(result.id),
+      student_ref: null,
+      student_key: encodeStudentRef(Number(result.id)),
+    });
   } catch (error) {
     if (error.code === '23505' || error.errcode === 1555 || error.errcode === 2067) {
       const existingCard = s.rfid_uid && await db.prepare('SELECT id FROM students WHERE rfid_uid=?').get(s.rfid_uid);
@@ -941,7 +945,11 @@ app.post('/api/students', async (req, res) => {
       )
       .get(s);
     if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
-    res.json({ id: null, student_ref: null, student_key: encodeStudentRef(Number(r.id)) });
+    res.json({
+      id: Number(r.id),
+      student_ref: null,
+      student_key: encodeStudentRef(Number(r.id)),
+    });
   } catch (e) {
     if (e.code !== '23505' && e.errcode !== 1555 && e.errcode !== 2067) throw e;
     res.status(400).json({ error: 'LRN or RFID card is already assigned to another student' });
@@ -981,7 +989,6 @@ app.get('/api/students/:id', async (req, res) => {
   if (!student) return res.status(404).json({ error: 'Student not found' });
   res.json({
     ...student,
-    id: null,
     display_name: displayStudentName(student),
     full_name: fullStudentName(student),
   });
@@ -1158,7 +1165,6 @@ app.get('/api/attendance', async (req, res) => {
   const afternoonLateTime = await getSetting('afternoon_late_time');
   const attendanceRows = rows.map((row) => ({
     ...row,
-    id: null,
     student_ref: null,
     student_key: encodeStudentRef(row.id),
     display_name: displayStudentName(row),
@@ -1230,7 +1236,7 @@ app.get('/api/students/:id/attendance', async (req, res) => {
     });
   }
 
-  res.json({ student: { ...student, id: null }, month, totals, days });
+  res.json({ student, month, totals, days });
 });
 
 // ---------- actions ----------
