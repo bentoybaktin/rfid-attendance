@@ -492,6 +492,7 @@ const sendCsv = (res, name, rows) => {
   res.send(toCsv(rows));
 };
 const normUid = (u) => String(u || '').replace(/[^0-9a-f]/gi, '').toUpperCase() || null;
+const isValidRfidUid = (uid) => /^(?:[0-9A-F]{8}|[0-9A-F]{10}|[0-9A-F]{12}|[0-9A-F]{14}|[0-9A-F]{16}|[0-9A-F]{18}|[0-9A-F]{20})$/.test(uid || '');
 const fullStudentName = (student) =>
   student.surname && student.first_name
     ? `${student.surname}, ${student.first_name}${student.middle_name ? ` ${student.middle_name}` : ''}${student.name_extension ? ` ${student.name_extension}` : ''}`
@@ -887,6 +888,9 @@ app.post('/api/user/students', async (req, res) => {
   const { s, error } = await readStudent(req.body);
   if (error) return res.status(400).json({ error });
   if (!s.lrn) return res.status(400).json({ error: 'LRN is required to add a student' });
+  if (!isValidRfidUid(s.rfid_uid) || req.body.rfid_scanned !== true) {
+    return res.status(400).json({ error: 'Scan a valid RFID card before adding a student' });
+  }
 
   const duplicateCard = s.rfid_uid
     ? await db.prepare('SELECT id FROM students WHERE rfid_uid=?').get(s.rfid_uid)
@@ -936,6 +940,9 @@ app.post('/api/user/students', async (req, res) => {
 app.post('/api/students', async (req, res) => {
   const { s, error } = await readStudent(req.body);
   if (error) return res.status(400).json({ error });
+  if (!isValidRfidUid(s.rfid_uid) || req.body.rfid_scanned !== true) {
+    return res.status(400).json({ error: 'Scan a valid RFID card before adding a student' });
+  }
   try {
     const r = await db
       .prepare(

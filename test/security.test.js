@@ -70,6 +70,19 @@ test('security headers, role-based access, and login rate limit', async () => {
       body: JSON.stringify({ grade: 7, section: 'Email Test' }),
     });
     assert.equal(sectionResponse.status, 200);
+    const missingCardResponse = await request('/api/students', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        lrn: '123456789012',
+        surname: 'Test',
+        first_name: 'Email',
+        grade: 7,
+        section: 'Email Test',
+      }),
+    });
+    assert.equal(missingCardResponse.status, 400);
+    assert.match((await missingCardResponse.json()).error, /scan a valid rfid card/i);
     const studentResponse = await request('/api/students', {
       method: 'POST',
       headers: adminHeaders,
@@ -79,6 +92,8 @@ test('security headers, role-based access, and login rate limit', async () => {
         first_name: 'Email',
         grade: 7,
         section: 'Email Test',
+        rfid_uid: '01020304',
+        rfid_scanned: true,
         parent_email: 'guardian@example.com',
         email_consent: true,
       }),
@@ -202,6 +217,7 @@ test('security headers, role-based access, and login rate limit', async () => {
         grade: 7,
         section: 'Email Test',
         rfid_uid: unknownUid,
+        rfid_scanned: true,
         parent_name: 'Guardian',
       }),
     });
@@ -210,6 +226,20 @@ test('security headers, role-based access, and login rate limit', async () => {
       (await duplicateStudent.json()).error,
       "This student is already enrolled. Please contact the admin to update the student's information."
     );
+    const userMissingCardResponse = await request('/api/user/students', {
+      method: 'POST',
+      headers: userHeaders,
+      body: JSON.stringify({
+        lrn: '123456789015',
+        surname: 'New',
+        first_name: 'Student',
+        grade: 7,
+        section: 'Email Test',
+        parent_name: 'Guardian',
+      }),
+    });
+    assert.equal(userMissingCardResponse.status, 400);
+    assert.match((await userMissingCardResponse.json()).error, /scan a valid rfid card/i);
 
     const invalidEmailResponse = await request('/api/students', {
       method: 'POST',
@@ -220,6 +250,8 @@ test('security headers, role-based access, and login rate limit', async () => {
         first_name: 'Invalid',
         grade: 7,
         section: 'Email Test',
+        rfid_uid: 'D1E2F3A4',
+        rfid_scanned: true,
         parent_email: 'not-an-email',
       }),
     });

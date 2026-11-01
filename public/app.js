@@ -269,7 +269,12 @@ window.addEventListener('scroll', () => {
   });
 }, true);
 function validationMessage(field) {
-  const label = field.labels?.[0]?.textContent.replace(/\s+/g, ' ').trim() ||
+  const labelElement = field.labels?.[0];
+  const labelCopy = labelElement?.cloneNode(true);
+  labelCopy?.querySelectorAll('input, select, textarea, button, .section-dropdown, .field-error')
+    .forEach((control) => control.remove());
+  const labelText = labelCopy?.textContent.replace(/\s+/g, ' ').trim() || '';
+  const label = labelText ||
     field.getAttribute('aria-label') || 'This field';
   if (field.validity.valueMissing) return `${label} is required.`;
   if (field.validity.customError) return field.validationMessage;
@@ -474,6 +479,7 @@ let studentHidScanTarget = null;
 let studentHidScanOriginalValue = '';
 let studentHidScanSelectionStart = 0;
 let studentHidScanSelectionEnd = 0;
+let studentRfidScanned = false;
 let cardWatchTimer = null;
 let cardWatchInProgress = false;
 let lastUserScanId = 0;
@@ -790,6 +796,8 @@ function finishStudentHidScan() {
     const uid = studentHidScanBuffer.replace(/[^0-9a-f]/gi, '').toUpperCase();
     if (/^(?:[0-9A-F]{8}|[0-9A-F]{10}|[0-9A-F]{12}|[0-9A-F]{14}|[0-9A-F]{16}|[0-9A-F]{18}|[0-9A-F]{20})$/.test(uid)) {
       $('#sfUid').value = uid;
+      setStudentRfidScanned(true);
+      $('#sfUid').dispatchEvent(new Event('input', { bubbles: true }));
     } else {
       const target = studentHidScanTarget;
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
@@ -1687,7 +1695,18 @@ async function loadUnknown() {
     ? '<span class="muted">Unregistered cards just tapped:</span> ' +
       list.map((u) => `<button type="button" class="chip" data-uid="${esc(u.uid)}">${esc(u.uid)}</button>`).join('')
     : '';
-  $('#unknownBox').querySelectorAll('[data-uid]').forEach((b) => (b.onclick = () => ($('#sfUid').value = b.dataset.uid)));
+  $('#unknownBox').querySelectorAll('[data-uid]').forEach((button) => {
+    button.onclick = () => {
+      $('#sfUid').value = button.dataset.uid;
+      setStudentRfidScanned(true);
+      $('#sfUid').dispatchEvent(new Event('input', { bubbles: true }));
+    };
+  });
+}
+
+function setStudentRfidScanned(scanned) {
+  studentRfidScanned = scanned;
+  if (scanned) clearFieldValidation($('#sfUid'));
 }
 
 async function startCardWatch() {
@@ -1708,6 +1727,8 @@ async function startCardWatch() {
       if (scan.code === 'UNKNOWN_CARD') {
         if (!$('#sfUid').value) {
           $('#sfUid').value = scan.uid;
+          setStudentRfidScanned(true);
+          $('#sfUid').dispatchEvent(new Event('input', { bubbles: true }));
           $('#sfMsg').className = 'muted';
           $('#sfMsg').textContent = `Card ${scan.uid} detected and added to the form.`;
         }
@@ -1746,6 +1767,7 @@ async function openUserStudentForm(rfidUid = '') {
   $('#sfHelp').classList.remove('hidden');
   $('#unknownBox').classList.add('hidden');
   $('#sfUid').value = rfidUid;
+  setStudentRfidScanned(Boolean(rfidUid));
   if (rfidUid) {
     $('#sfMsg').className = 'muted';
     $('#sfMsg').textContent = `Unregistered RFID card ${rfidUid} detected. Complete the form to enroll this student.`;
@@ -1810,8 +1832,8 @@ $('#addStudentBtn').onclick = () => {
   clearForm();
   startCardWatch().then(showStudentForm).catch((error) => {
     $('#sfMsg').className = 'err';
-    $('#sfMsg').textContent = operationError(error, 'start RFID card detection', 'enter a card UID manually or retry card detection.');
-    showOperationNotice(error, 'start RFID card detection', 'enter a card UID manually or retry card detection.');
+    $('#sfMsg').textContent = operationError(error, 'start RFID card detection', 'check the reader connection and retry card detection.');
+    showOperationNotice(error, 'start RFID card detection', 'check the reader connection and retry card detection.');
     showStudentForm();
   });
 };
@@ -1834,6 +1856,7 @@ async function editStudent(studentRef) {
   $('#sfClass').value = `${s.grade}::${s.section}`;
   updateSectionDropdown($('#sfClass'));
   $('#sfUid').value = details.rfid_uid || '';
+  setStudentRfidScanned(false);
   $('#sfParent').value = details.parent_name || '';
   $('#sfPhone').value = details.parent_phone || '';
   $('#sfConsent').checked = !!details.consent;
@@ -1854,6 +1877,7 @@ function clearForm() {
   clearFormValidation($('#stuForm'));
   $('#stuForm').reset();
   $('#sfId').value = '';
+  studentRfidScanned = false;
   $('#sfMsg').className = 'err';
   $('#sfMsg').textContent = '';
   $('#stuFormPanel').classList.add('hidden');
@@ -1889,6 +1913,12 @@ async function removeStudent(studentRef) {
 
 $('#stuForm').onsubmit = async (e) => {
   e.preventDefault();
+  const id = $('#sfId').value;
+  if (!id && !studentRfidScanned) {
+    showFieldValidation($('#sfUid'), 'Scan an RFID card with the reader before adding this student.');
+    $('#sfUid').focus();
+    return;
+  }
   const body = {
     lrn: $('#sfLrn').value,
     surname: $('#sfSurname').value,
@@ -1898,13 +1928,13 @@ $('#stuForm').onsubmit = async (e) => {
     grade: $('#sfClass').value.split('::')[0],
     section: $('#sfClass').value.split('::').slice(1).join('::'),
     rfid_uid: $('#sfUid').value,
+    rfid_scanned: !id && studentRfidScanned,
     parent_name: $('#sfParent').value,
     parent_phone: $('#sfPhone').value,
     consent: $('#sfConsent').checked,
     parent_email: $('#sfEmail').value,
     email_consent: $('#sfEmailConsent').checked,
   };
-  const id = $('#sfId').value;
   try {
     if (userAddMode) {
       await api('/user/students', { method: 'POST', body });
