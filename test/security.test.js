@@ -154,6 +154,15 @@ test('security headers, role-based access, and login rate limit', async () => {
     );
     assert.equal(monthlyAttendanceResponse.status, 200);
     assert.equal((await monthlyAttendanceResponse.json()).student.id, internalStudent.id);
+    const bulkDeleteResponse = await request('/api/students', {
+      method: 'DELETE',
+      headers: adminHeaders,
+      body: JSON.stringify({ refs: [student.student_key] }),
+    });
+    assert.equal(bulkDeleteResponse.status, 200);
+    assert.equal((await bulkDeleteResponse.json()).removed, 1);
+    assert.equal(await db.prepare('SELECT active FROM students WHERE id=?').get(internalStudent.id)
+      .then((row) => row.active), 0);
 
     const unknownUid = 'A1B2C3D4';
     const unknownTap = await request('/api/tap', {

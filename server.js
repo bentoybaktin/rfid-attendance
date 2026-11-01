@@ -967,7 +967,7 @@ app.delete('/api/students', async (req, res) => {
   }
 
   const uniqueIds = [...new Set(refs.map(decodeStudentRef))];
-  const removeSelected = await db.transaction(async () => {
+  const removed = await db.transaction(async () => {
     let removed = 0;
     for (const id of uniqueIds) {
       removed += Number((await db.prepare('UPDATE students SET active=0, rfid_uid=NULL WHERE id=? AND active=1').run(id)).changes);
