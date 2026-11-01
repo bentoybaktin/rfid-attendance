@@ -23,8 +23,8 @@ const { sendAbsentNotices } = require('./notify');
 const PORT = process.env.PORT || 3000;
 const DEVICE_KEY = process.env.DEVICE_KEY || 'change-me-device-key';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
-const ADMIN_USERNAME = process.env.ADMIN_EMAIL || process.env.ADMIN_USERNAME || 'admin@example.com';
-const USER_USERNAME = process.env.USER_EMAIL || process.env.USER_USERNAME || 'user@example.com';
+const ADMIN_USERNAME = process.env.ADMIN_EMAIL || process.env.ADMIN_USERNAME || 'admin@jhs.local';
+const USER_USERNAME = process.env.USER_EMAIL || process.env.USER_USERNAME || 'user@jhs.local';
 const USER_PASSWORD = process.env.USER_PASSWORD || 'user1234';
 
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
@@ -177,6 +177,28 @@ app.use(express.json({ limit: '64kb' }));
 
 // ---------- auth ----------
 const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
+const STUDENT_REF_KEY = crypto.createHash('sha256').update(AUTH_SECRET).update(':student-reference').digest();
+function encodeStudentRef(id) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', STUDENT_REF_KEY, iv);
+  const ciphertext = Buffer.concat([cipher.update(String(id)), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64url');
+}
+function decodeStudentRef(reference) {
+  try {
+    const token = Buffer.from(String(reference || ''), 'base64url');
+    if (token.length < 29) return null;
+    const decipher = crypto.createDecipheriv('aes-256-gcm', STUDENT_REF_KEY, token.subarray(0, 12));
+    decipher.setAuthTag(token.subarray(12, 28));
+    const id = Number(Buffer.concat([
+      decipher.update(token.subarray(28)),
+      decipher.final(),
+    ]).toString());
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
 const signToken = (account, rememberMe = false) => {
   const payload = Buffer.from(JSON.stringify({
     userId: account.id,
@@ -804,7 +826,9 @@ app.get('/api/students', async (req, res) =>
   ).all())
     .map((student) => {
       return {
-        id: student.id,
+        id: null,
+        student_ref: null,
+        student_key: encodeStudentRef(student.id),
         name: student.name,
         surname: student.surname,
         first_name: student.first_name,
@@ -816,7 +840,7 @@ app.get('/api/students', async (req, res) =>
         has_sms_contact: Boolean(student.consent && student.parent_phone),
         has_email_contact: Boolean(student.email_consent && student.parent_email),
         display_name: displayStudentName(student),
-        full_name: fullStudentName(student),
+        full_name: null,
       };
     })
   )
@@ -892,7 +916,7 @@ app.post('/api/user/students', async (req, res) => {
        RETURNING id`
     ).get(s);
     if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
-    res.status(201).json({ id: Number(result.id) });
+    res.status(201).json({ id: null, student_ref: null, student_key: encodeStudentRef(Number(result.id)) });
   } catch (error) {
     if (error.code === '23505' || error.errcode === 1555 || error.errcode === 2067) {
       const existingCard = s.rfid_uid && await db.prepare('SELECT id FROM students WHERE rfid_uid=?').get(s.rfid_uid);
@@ -917,7 +941,7 @@ app.post('/api/students', async (req, res) => {
       )
       .get(s);
     if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
-    res.json({ id: Number(r.id) });
+    res.json({ id: null, student_ref: null, student_key: encodeStudentRef(Number(r.id)) });
   } catch (e) {
     if (e.code !== '23505' && e.errcode !== 1555 && e.errcode !== 2067) throw e;
     res.status(400).json({ error: 'LRN or RFID card is already assigned to another student' });
@@ -925,16 +949,16 @@ app.post('/api/students', async (req, res) => {
 });
 
 app.delete('/api/students', async (req, res) => {
-  const { ids } = req.body;
+  const { refs } = req.body;
   if (
-    !Array.isArray(ids) ||
-    ids.length === 0 ||
-    ids.some((id) => !Number.isSafeInteger(id) || id < 1)
+    !Array.isArray(refs) ||
+    refs.length === 0 ||
+    refs.some((reference) => typeof reference !== 'string' || !decodeStudentRef(reference))
   ) {
     return res.status(400).json({ error: 'Select at least one valid student' });
   }
 
-  const uniqueIds = [...new Set(ids)];
+  const uniqueIds = [...new Set(refs.map(decodeStudentRef))];
   const removeSelected = await db.transaction(async () => {
     let removed = 0;
     for (const id of uniqueIds) {
@@ -947,8 +971,8 @@ app.delete('/api/students', async (req, res) => {
 });
 
 app.get('/api/students/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid student id' });
+  const id = decodeStudentRef(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid student reference' });
   const student = await db.prepare(
     `SELECT id,lrn,name,surname,first_name,middle_name,name_extension,grade,section,
             rfid_uid,parent_name,parent_phone,consent,parent_email,email_consent
@@ -957,12 +981,15 @@ app.get('/api/students/:id', async (req, res) => {
   if (!student) return res.status(404).json({ error: 'Student not found' });
   res.json({
     ...student,
+    id: null,
     display_name: displayStudentName(student),
     full_name: fullStudentName(student),
   });
 });
 
 app.put('/api/students/:id', async (req, res) => {
+  const id = decodeStudentRef(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid student reference' });
   const { s, error } = await readStudent(req.body);
   if (error) return res.status(400).json({ error });
   try {
@@ -971,7 +998,7 @@ app.put('/api/students/:id', async (req, res) => {
        grade=@grade,section=@section,rfid_uid=@rfid_uid,
        parent_name=@parent_name,parent_phone=@parent_phone,consent=@consent,
        parent_email=@parent_email,email_consent=@email_consent WHERE id=@id`
-    ).run({ ...s, id: req.params.id });
+    ).run({ ...s, id });
     if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
     res.json({ ok: true });
   } catch (e) {
@@ -982,7 +1009,9 @@ app.put('/api/students/:id', async (req, res) => {
 
 // Deactivate (keeps attendance history) and free the card for reuse.
 app.delete('/api/students/:id', async (req, res) => {
-  await db.prepare('UPDATE students SET active=0, rfid_uid=NULL WHERE id=?').run(req.params.id);
+  const id = decodeStudentRef(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Invalid student reference' });
+  await db.prepare('UPDATE students SET active=0, rfid_uid=NULL WHERE id=?').run(id);
   res.json({ ok: true });
 });
 
@@ -1129,6 +1158,9 @@ app.get('/api/attendance', async (req, res) => {
   const afternoonLateTime = await getSetting('afternoon_late_time');
   const attendanceRows = rows.map((row) => ({
     ...row,
+    id: null,
+    student_ref: null,
+    student_key: encodeStudentRef(row.id),
     display_name: displayStudentName(row),
     full_name: fullStudentName(row),
     status: row.morning_in
@@ -1145,9 +1177,9 @@ app.get('/api/attendance', async (req, res) => {
 });
 
 app.get('/api/students/:id/attendance', async (req, res) => {
-  const id = Number(req.params.id);
+  const id = decodeStudentRef(req.params.id);
   const month = String(req.query.month || '');
-  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Invalid student id' });
+  if (!id) return res.status(400).json({ error: 'Invalid student reference' });
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: 'Month must use YYYY-MM format' });
 
   const student = await db.prepare(
@@ -1198,7 +1230,7 @@ app.get('/api/students/:id/attendance', async (req, res) => {
     });
   }
 
-  res.json({ student, month, totals, days });
+  res.json({ student: { ...student, id: null }, month, totals, days });
 });
 
 // ---------- actions ----------
@@ -1210,12 +1242,12 @@ app.post('/api/notify-absent', async (req, res) => {
 
 app.get('/api/notifications', async (req, res) =>
   res.json(
-    await db
+    (await db
       .prepare(
         `SELECT n.*, s.name FROM notifications n LEFT JOIN students s ON s.id=n.student_id
          ORDER BY n.id DESC LIMIT 200`
       )
-      .all()
+      .all()).map(({ student_id, ...notification }) => notification)
   )
 );
 
@@ -1300,7 +1332,7 @@ app.get('/api/export/sf2.csv', async (req, res) => {
 
 // ---------- static dashboard ----------
 app.get('/students/:id', (req, res, next) => {
-  if (!/^\d+$/.test(req.params.id)) return next();
+  if (!/^[A-Za-z0-9_-]+$/.test(req.params.id)) return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 

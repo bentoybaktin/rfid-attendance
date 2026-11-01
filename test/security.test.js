@@ -85,7 +85,25 @@ test('security headers, role-based access, and login rate limit', async () => {
     });
     assert.equal(studentResponse.status, 200);
     const student = await studentResponse.json();
+    assert.equal(student.id, null);
+    assert.equal(student.student_ref, null);
+    assert.match(student.student_key, /^[A-Za-z0-9_-]+$/);
+    const internalStudent = await db.prepare('SELECT id FROM students WHERE lrn=?').get('123456789012');
+    const studentListResponse = await request('/api/students', { headers: adminHeaders });
+    const listedStudents = await studentListResponse.json();
+    assert.ok(listedStudents.every((listedStudent) => listedStudent.id === null));
+    const listedStudent = listedStudents.find((listed) => listed.student_key);
+    assert.ok(listedStudent);
+    assert.equal(listedStudent.student_ref, null);
+    assert.equal(listedStudent.name, 'Test, Email');
+    assert.equal(listedStudent.display_name, 'Test, Email');
+    assert.equal(listedStudent.full_name, null);
+    assert.equal(listedStudent.surname, 'Test');
+    assert.equal(listedStudent.first_name, 'Email');
     const manilaDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const attendanceListResponse = await request(`/api/attendance?date=${manilaDate}`, { headers: adminHeaders });
+    const attendanceList = await attendanceListResponse.json();
+    assert.ok(attendanceList.rows.every((row) => row.id === null && row.student_ref === null && row.student_key));
     const yesterday = new Date(`${manilaDate}T00:00:00Z`);
     yesterday.setUTCDate(yesterday.getUTCDate() - 1);
     const expiredDate = yesterday.toISOString().slice(0, 10);
@@ -93,19 +111,19 @@ test('security headers, role-based access, and login rate limit', async () => {
     const recentScanTime = `${manilaDate}T00:01:00`;
     const secondRecentScanTime = `${manilaDate}T00:02:00`;
     await db.prepare('INSERT INTO scans(student_id,uid,ts,date,type) VALUES(?,?,?,?,?)')
-      .run(student.id, null, expiredScanTime, expiredScanTime.slice(0, 10), 'MORNING_IN');
+      .run(internalStudent.id, null, expiredScanTime, expiredScanTime.slice(0, 10), 'MORNING_IN');
     await db.prepare('INSERT INTO scans(student_id,uid,ts,date,type) VALUES(?,?,?,?,?)')
-      .run(student.id, null, recentScanTime, recentScanTime.slice(0, 10), 'MORNING_IN');
+      .run(internalStudent.id, null, recentScanTime, recentScanTime.slice(0, 10), 'MORNING_IN');
     await db.prepare('INSERT INTO scans(student_id,uid,ts,date,type) VALUES(?,?,?,?,?)')
-      .run(student.id, null, secondRecentScanTime, secondRecentScanTime.slice(0, 10), 'MORNING_OUT');
+      .run(internalStudent.id, null, secondRecentScanTime, secondRecentScanTime.slice(0, 10), 'MORNING_OUT');
     await db.prepare('INSERT INTO scan_attempts(student_id,uid,ts,date,code,message) VALUES(?,?,?,?,?,?)')
-      .run(student.id, null, expiredScanTime, expiredScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Expired attempt');
+      .run(internalStudent.id, null, expiredScanTime, expiredScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Expired attempt');
     await db.prepare('INSERT INTO scan_attempts(student_id,uid,ts,date,code,message) VALUES(?,?,?,?,?,?)')
-      .run(student.id, null, recentScanTime, recentScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Recent attempt');
+      .run(internalStudent.id, null, recentScanTime, recentScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Recent attempt');
     await db.prepare('INSERT INTO scan_attempts(student_id,uid,ts,date,code,message) VALUES(?,?,?,?,?,?)')
-      .run(student.id, null, secondRecentScanTime, secondRecentScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Second recent attempt');
+      .run(internalStudent.id, null, secondRecentScanTime, secondRecentScanTime.slice(0, 10), 'UNKNOWN_CARD', 'Second recent attempt');
     await db.prepare('INSERT INTO attendance(student_id,date,status) VALUES(?,?,?)')
-      .run(student.id, expiredScanTime.slice(0, 10), 'present');
+      .run(internalStudent.id, expiredScanTime.slice(0, 10), 'present');
     const retainedFeed = await request('/api/feed?limit=4', { headers: adminHeaders });
     assert.deepEqual((await retainedFeed.json()).map((scan) => scan.ts), [secondRecentScanTime, recentScanTime]);
     const retainedAttempts = await request('/api/scan-attempts?limit=1&offset=0', { headers: adminHeaders });
@@ -113,18 +131,26 @@ test('security headers, role-based access, and login rate limit', async () => {
     const attemptPageTwo = await request('/api/scan-attempts?limit=1&offset=1', { headers: adminHeaders });
     assert.deepEqual((await attemptPageTwo.json()).map((attempt) => attempt.message), ['Recent attempt']);
     const retainedAttendance = await db.prepare('SELECT status FROM attendance WHERE student_id=? AND date=?')
-      .get(student.id, expiredDate);
+      .get(internalStudent.id, expiredDate);
     assert.equal(retainedAttendance.status, 'present');
     assert.equal(await db.prepare('SELECT id FROM scans WHERE student_id=? AND date=?')
-      .get(student.id, expiredDate), undefined);
+      .get(internalStudent.id, expiredDate), undefined);
     assert.equal(await db.prepare('SELECT id FROM scan_attempts WHERE student_id=? AND date=?')
-      .get(student.id, expiredDate), undefined);
-    const studentDetailsResponse = await request(`/api/students/${student.id}`, {
+      .get(internalStudent.id, expiredDate), undefined);
+    const studentDetailsResponse = await request(`/api/students/${student.student_key}`, {
       headers: adminHeaders,
     });
     const studentDetails = await studentDetailsResponse.json();
+    assert.equal(studentDetails.id, null);
     assert.equal(studentDetails.parent_email, 'guardian@example.com');
     assert.equal(studentDetails.email_consent, 1);
+    assert.equal((await request('/api/students/1', { headers: adminHeaders })).status, 400);
+    const monthlyAttendanceResponse = await request(
+      `/api/students/${student.student_key}/attendance?month=${manilaDate.slice(0, 7)}`,
+      { headers: adminHeaders }
+    );
+    assert.equal(monthlyAttendanceResponse.status, 200);
+    assert.equal((await monthlyAttendanceResponse.json()).student.id, null);
 
     const unknownUid = 'A1B2C3D4';
     const unknownTap = await request('/api/tap', {

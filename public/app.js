@@ -458,7 +458,7 @@ $('#rememberMe').checked = rememberMe;
 let settings = {};
 let classes = [];
 let students = [];
-let selectedStudentIds = new Set();
+let selectedStudentRefs = new Set();
 let studentMarkMode = false;
 let timer = null;
 let userTimer = null;
@@ -479,11 +479,8 @@ let cardWatchInProgress = false;
 let lastUserScanId = 0;
 let lastUserAttemptId = 0;
 const validTabs = new Set(['overview', 'attendance', 'students', 'risk', 'notifications', 'settings']);
-const studentRouteMatch = window.location.pathname.match(/^\/students\/(\d+)\/?$/);
-const initialStudentId = studentRouteMatch && Number.isSafeInteger(Number(studentRouteMatch[1])) &&
-  Number(studentRouteMatch[1]) > 0
-  ? Number(studentRouteMatch[1])
-  : null;
+const studentRouteMatch = window.location.pathname.match(/^\/students\/([A-Za-z0-9_-]+)\/?$/);
+const initialStudentRef = studentRouteMatch ? studentRouteMatch[1] : null;
 const urlTab = new URLSearchParams(window.location.search).get('tab');
 let currentTab = validTabs.has(urlTab)
   ? urlTab
@@ -865,11 +862,14 @@ function captureStudentHidScanKey(event) {
 }
 
 document.addEventListener('keydown', (event) => {
-  if (role !== 'user' || $('#userApp').classList.contains('hidden')) return;
-  if (!$('#stuFormPanel').classList.contains('hidden') && userAddMode) {
+  const studentFormOpen = !$('#stuFormPanel').classList.contains('hidden');
+  const canCaptureStudentCard = role === 'admin' ||
+    (role === 'user' && !$('#userApp').classList.contains('hidden') && userAddMode);
+  if (studentFormOpen && canCaptureStudentCard) {
     captureStudentHidScanKey(event);
     return;
   }
+  if (role !== 'user' || $('#userApp').classList.contains('hidden')) return;
   if (!$('#stuFormPanel').classList.contains('hidden') ||
       event.ctrlKey || event.altKey || event.metaKey) return;
 
@@ -943,8 +943,8 @@ async function boot() {
   $('#login').classList.add('hidden');
   $('#userApp').classList.add('hidden');
   $('#app').classList.remove('hidden');
-  if (initialStudentId) {
-    await showStudentDetails(initialStudentId).catch((error) => {
+  if (initialStudentRef) {
+    await showStudentDetails(initialStudentRef).catch((error) => {
       $('#studentDetailsMsg').textContent = error.message;
       showOperationNotice(error, 'open this student record', 'return to the Students list and open the record again.');
     });
@@ -1210,10 +1210,10 @@ document.querySelectorAll('#tabs [data-tab]').forEach((button) => {
   };
 });
 window.addEventListener('popstate', () => {
-  const studentMatch = window.location.pathname.match(/^\/students\/(\d+)\/?$/);
+  const studentMatch = window.location.pathname.match(/^\/students\/([A-Za-z0-9_-]+)\/?$/);
   if (studentMatch) {
     showTab('students');
-    showStudentDetails(Number(studentMatch[1])).catch((error) => {
+    showStudentDetails(studentMatch[1]).catch((error) => {
       $('#studentDetailsMsg').textContent = error.message;
       showOperationNotice(error, 'open this student record', 'return to the Students list and open the record again.');
     });
@@ -1406,7 +1406,7 @@ async function loadAttendance() {
     (r.rows
       .map(
         (s) =>
-          `<tr><td>${esc(s.lrn)}</td><td><button type="button" class="student-attendance-link" data-monthly-attendance="${s.id}">${esc(s.full_name || s.name)}</button></td><td>${esc(clsLabel(s))}</td>
+          `<tr><td>${esc(s.lrn)}</td><td><button type="button" class="student-attendance-link" data-monthly-attendance="${s.student_key}">${esc(s.full_name || s.name)}</button></td><td>${esc(clsLabel(s))}</td>
            <td>${esc(hhmm(s.morning_in))}</td><td>${esc(hhmm(s.morning_out))}</td>
            <td>${esc(hhmm(s.afternoon_in))}</td><td>${esc(hhmm(s.afternoon_out))}</td>
            <td>${badge(s.morning_status, !r.schoolDay && s.morning_status === 'absent' ? 'no class' : s.morning_status)}</td>
@@ -1421,11 +1421,11 @@ async function loadAttendance() {
       'add-student'
     ));
   $('#attTable').querySelectorAll('[data-monthly-attendance]').forEach((button) => {
-    button.onclick = () => showStudentMonthlyAttendance(Number(button.dataset.monthlyAttendance));
+    button.onclick = () => showStudentMonthlyAttendance(button.dataset.monthlyAttendance);
   });
 }
 
-async function showStudentMonthlyAttendance(studentId) {
+async function showStudentMonthlyAttendance(studentRef) {
   const modal = $('#studentAttendanceModal');
   modal.classList.remove('hidden');
   document.body.classList.add('modal-open');
@@ -1437,7 +1437,7 @@ async function showStudentMonthlyAttendance(studentId) {
   $('#studentAttendanceTable').innerHTML = '';
   try {
     const month = ($('#attDate').value || '').slice(0, 7);
-    const report = await api(`/students/${studentId}/attendance?month=${encodeURIComponent(month)}`);
+    const report = await api(`/students/${studentRef}/attendance?month=${encodeURIComponent(month)}`);
     $('#studentAttendanceTitle').textContent = report.student.display_name || report.student.name;
     $('#studentAttendanceInfo').textContent =
       `${report.student.lrn || 'No LRN'} - ${clsLabel(report.student)} - ${report.month}`;
@@ -1499,8 +1499,13 @@ $('#attExport').onclick = () => {
 // ---------- students ----------
 async function loadStudents() {
   await refreshLookups();
-  const activeIds = new Set(students.map((s) => s.id));
-  selectedStudentIds = new Set([...selectedStudentIds].filter((id) => activeIds.has(id)));
+  renderStudents();
+  await loadUnknown();
+}
+
+function renderStudents() {
+  const activeIds = new Set(students.map((s) => s.student_key));
+  selectedStudentRefs = new Set([...selectedStudentRefs].filter((ref) => activeIds.has(ref)));
   const classFilter = $('#stuClassFilter').value;
   const visibleStudents = classFilter
     ? students.filter((s) => `${s.grade}::${s.section}` === classFilter)
@@ -1510,20 +1515,20 @@ async function loadStudents() {
     (visibleStudents
       .map(
         (s) =>
-          `<tr>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.id}" ${selectedStudentIds.has(s.id) ? 'checked' : ''}></td>` : ''}
-           <td><a class="student-attendance-link" data-student-detail="${s.id}" href="/students/${s.id}">${esc(s.display_name || s.name)}</a></td>
+          `<tr>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.student_key}" ${selectedStudentRefs.has(s.student_key) ? 'checked' : ''}></td>` : ''}
+           <td><a class="student-attendance-link" data-student-detail="${s.student_key}" href="/students/${s.student_key}">${esc(s.display_name || s.name)}</a></td>
            <td>${esc(clsLabel(s))}</td>
            <td>${s.has_rfid_uid ? '<span class="muted">RFID protected</span>' : '<span class="muted">none</span>'}</td>
            <td>${s.has_sms_contact ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
            <td>${s.has_email_contact ? badge('present', 'consented') : badge('absent', 'no consent')}</td>
-           <td><button class="small ghost" data-edit="${s.id}">Edit</button>
-               <button class="small ghost" data-del="${s.id}">Remove</button></td></tr>`
+           <td><button class="small ghost" data-edit="${s.student_key}">Edit</button>
+               <button class="small ghost" data-del="${s.student_key}">Remove</button></td></tr>`
       )
       .join('') || `<tr><td colspan="${studentMarkMode ? 7 : 6}" class="muted">No students saved yet.</td></tr>`);
   $('#stuTable').querySelectorAll('[data-student-detail]').forEach((link) => {
     link.onclick = (event) => {
       event.preventDefault();
-      showStudentDetails(Number(link.dataset.studentDetail), true).catch((error) => {
+      showStudentDetails(link.dataset.studentDetail, true).catch((error) => {
         $('#studentDetailsMsg').textContent = error.message;
         showOperationNotice(error, 'open this student record', 'return to the Students list and open the record again.');
       });
@@ -1531,30 +1536,30 @@ async function loadStudents() {
   });
   $('#stuTable').querySelectorAll('[data-select-student]').forEach((checkbox) => {
     checkbox.onchange = () => {
-      const id = Number(checkbox.dataset.selectStudent);
-      if (checkbox.checked) selectedStudentIds.add(id);
-      else selectedStudentIds.delete(id);
+      const studentRef = checkbox.dataset.selectStudent;
+      if (checkbox.checked) selectedStudentRefs.add(studentRef);
+      else selectedStudentRefs.delete(studentRef);
       updateStudentSelection(visibleStudents);
     };
   });
   $('#stuTable').querySelectorAll('[data-edit]').forEach((button) => {
-    button.onclick = () => editStudent(Number(button.dataset.edit)).catch((error) => {
+    button.onclick = () => editStudent(button.dataset.edit).catch((error) => {
       $('#stuRemoveMsg').textContent = `Could not open student details: ${error.message}`;
       showOperationNotice(error, 'open this student for editing', 'reload the student list and retry.');
     });
   });
-  $('#stuTable').querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => removeStudent(Number(b.dataset.del)).catch((error) => {
+  $('#stuTable').querySelectorAll('[data-del]').forEach((b) => (b.onclick = () => removeStudent(b.dataset.del).catch((error) => {
     showOperationNotice(error, 'remove this student', 'reload the student list and retry.');
   })));
   $('#markAllStudents').onclick = () => {
-    for (const student of visibleStudents) selectedStudentIds.add(student.id);
+    for (const student of visibleStudents) selectedStudentRefs.add(student.student_key);
     $('#stuTable').querySelectorAll('[data-select-student]').forEach((checkbox) => {
       checkbox.checked = true;
     });
     updateStudentSelection(visibleStudents);
   };
   $('#unmarkAllStudents').onclick = () => {
-    selectedStudentIds.clear();
+    selectedStudentRefs.clear();
     $('#stuTable').querySelectorAll('[data-select-student]').forEach((checkbox) => {
       checkbox.checked = false;
     });
@@ -1563,21 +1568,20 @@ async function loadStudents() {
   updateStudentSelection(visibleStudents);
   $('#toggleStudentMark').textContent = studentMarkMode ? 'Done marking' : 'Mark students';
   $('#studentMarkControls').classList.toggle('hidden', !studentMarkMode);
-  await loadUnknown();
 }
 
-async function showStudentDetails(id, updateUrl = false) {
-  if (!Number.isSafeInteger(id) || id < 1) throw new Error('Invalid student id');
+async function showStudentDetails(studentRef, updateUrl = false) {
+  if (typeof studentRef !== 'string' || !studentRef) throw new Error('Invalid student reference');
   if (updateUrl) {
-    window.history.pushState({ studentId: id }, '', `/students/${id}`);
+    window.history.pushState({ studentRef }, '', `/students/${studentRef}`);
   }
-  const student = students.find((item) => item.id === id);
+  const student = students.find((item) => item.student_key === studentRef);
   $('#studentDetailsTitle').textContent = student?.display_name || student?.name || 'Student details';
   $('#studentDetailsMsg').textContent = 'Loading student details...';
   $('#studentDetailsPanel').classList.remove('hidden');
   document.body.classList.add('modal-open');
-  $('#studentDetailsEdit').dataset.studentId = String(id);
-  const details = await api(`/students/${id}`);
+  $('#studentDetailsEdit').dataset.studentRef = studentRef;
+  const details = await api(`/students/${studentRef}`);
   $('#studentDetailsTitle').textContent = details.display_name || details.name;
   $('#studentDetailsLrn').textContent = details.lrn || '-';
   $('#studentDetailsSection').textContent = clsLabel(details);
@@ -1593,7 +1597,7 @@ async function showStudentDetails(id, updateUrl = false) {
 function closeStudentDetails(updateUrl = false) {
   $('#studentDetailsPanel').classList.add('hidden');
   document.body.classList.remove('modal-open');
-  if (updateUrl && window.location.pathname.match(/^\/students\/\d+\/?$/)) {
+  if (updateUrl && window.location.pathname.match(/^\/students\/[A-Za-z0-9_-]+\/?$/)) {
     window.history.pushState({ tab: 'students' }, '', '/?tab=students');
   }
 }
@@ -1603,16 +1607,16 @@ $('#studentDetailsPanel').onclick = (event) => {
   if (event.target === $('#studentDetailsPanel')) closeStudentDetails(true);
 };
 $('#studentDetailsEdit').onclick = () => {
-  const id = Number($('#studentDetailsEdit').dataset.studentId);
+  const studentRef = $('#studentDetailsEdit').dataset.studentRef;
   closeStudentDetails(false);
-  editStudent(id).catch((error) => {
+  editStudent(studentRef).catch((error) => {
     $('#stuRemoveMsg').textContent = `Could not open student details: ${error.message}`;
     showOperationNotice(error, 'open this student for editing', 'reload the student list and retry.');
   });
 };
 
 function updateStudentSelection(visibleStudents = students) {
-  const selectedCount = selectedStudentIds.size;
+  const selectedCount = selectedStudentRefs.size;
   $('#stuSelectionCount').textContent = `${selectedCount} marked`;
   $('#stuRemoveSelected').textContent = `Remove marked (${selectedCount})`;
   $('#stuRemoveSelected').disabled = selectedCount === 0;
@@ -1620,7 +1624,7 @@ function updateStudentSelection(visibleStudents = students) {
 
 $('#toggleStudentMark').onclick = async () => {
   studentMarkMode = !studentMarkMode;
-  if (!studentMarkMode) selectedStudentIds.clear();
+  if (!studentMarkMode) selectedStudentRefs.clear();
   try {
     await loadStudents();
   } catch (error) {
@@ -1634,7 +1638,7 @@ showOperationNotice(err, 'load the student list', 'check your connection and ret
 });
 
 $('#stuRemoveSelected').onclick = async () => {
-  const selected = students.filter((s) => selectedStudentIds.has(s.id));
+  const selected = students.filter((s) => selectedStudentRefs.has(s.student_key));
   if (!selected.length) return;
   const names = selected.map((s) => s.display_name || s.name).join(', ');
   const confirmed = await confirmDeletion({
@@ -1648,23 +1652,25 @@ $('#stuRemoveSelected').onclick = async () => {
     try {
       const result = await api('/students', {
         method: 'DELETE',
-        body: { ids: selected.map((s) => s.id) },
+        body: { refs: selected.map((s) => s.student_key) },
       });
       removed = result.removed;
     } catch (err) {
       if (err.status !== 404 && err.status !== 405) throw err;
       removed = 0;
       for (const student of selected) {
-        await api('/students/' + student.id, { method: 'DELETE' });
+        await api('/students/' + student.student_key, { method: 'DELETE' });
         removed++;
       }
     }
-    selectedStudentIds.clear();
+    selectedStudentRefs.clear();
     studentMarkMode = false;
+    const removedRefs = new Set(selected.map((student) => student.student_key));
+    students = students.filter((student) => !removedRefs.has(student.student_key));
     $('#stuRemoveMsg').className = 'muted';
     $('#stuRemoveMsg').textContent = `${removed} student(s) removed. Attendance history was kept.`;
     showAccountToast(`${removed} student${removed === 1 ? '' : 's'} removed. Attendance history was kept.`);
-    await loadStudents();
+    renderStudents();
   } catch (err) {
     $('#stuRemoveMsg').className = 'err';
     $('#stuRemoveMsg').textContent = `${err.message}. Reload the student list and try again if the students are still active.`;
@@ -1810,21 +1816,21 @@ $('#addStudentBtn').onclick = () => {
   });
 };
 
-async function editStudent(id) {
-  const s = students.find((x) => x.id === id);
+async function editStudent(studentRef) {
+  const s = students.find((x) => x.student_key === studentRef);
   if (!s) return;
-  const details = await api(`/students/${id}`);
+  const details = await api(`/students/${studentRef}`);
   if ($('#app').classList.contains('hidden')) return;
   clearInterval(cardWatchTimer);
   cardWatchTimer = null;
   showStudentForm();
   $('#formTitle').textContent = 'Edit student';
-  $('#sfId').value = s.id;
+  $('#sfId').value = s.student_key;
   $('#sfLrn').value = details.lrn || '';
-  $('#sfSurname').value = s.surname || '';
-  $('#sfFirstName').value = s.first_name || (s.surname ? '' : s.name);
-  $('#sfMiddleName').value = s.middle_name || '';
-  $('#sfNameExtension').value = s.name_extension || '';
+  $('#sfSurname').value = details.surname || '';
+  $('#sfFirstName').value = details.first_name || (details.surname ? '' : details.name);
+  $('#sfMiddleName').value = details.middle_name || '';
+  $('#sfNameExtension').value = details.name_extension || '';
   $('#sfClass').value = `${s.grade}::${s.section}`;
   updateSectionDropdown($('#sfClass'));
   $('#sfUid').value = details.rfid_uid || '';
@@ -1865,18 +1871,20 @@ document.addEventListener('keydown', (e) => {
   else if (!$('#stuFormPanel').classList.contains('hidden')) clearForm();
 });
 
-async function removeStudent(id) {
-  const s = students.find((x) => x.id === id);
+async function removeStudent(studentRef) {
+  const s = students.find((x) => x.student_key === studentRef);
   const confirmed = await confirmDeletion({
     title: `Remove ${s ? s.name : 'this student'}?`,
     message: 'Their attendance history will be kept and their card will be freed.',
     confirmText: 'Remove student',
   });
   if (!confirmed) return;
-  await api('/students/' + id, { method: 'DELETE' });
+  await api('/students/' + studentRef, { method: 'DELETE' });
+  students = students.filter((student) => student.student_key !== studentRef);
+  selectedStudentRefs.delete(studentRef);
   clearForm();
   showAccountToast(`${s ? s.name : 'Student'} removed. Attendance history was kept.`);
-  await loadStudents();
+  renderStudents();
 }
 
 $('#stuForm').onsubmit = async (e) => {
@@ -2414,7 +2422,7 @@ $('#clearAllData').onclick = async () => {
     $('#setDebounce').value = settings.debounce_sec;
     $('#setNotify').checked = settings.notify_enabled === '1';
     $('#setEmailNotify').checked = settings.email_notify_enabled === '1';
-    selectedStudentIds.clear();
+    selectedStudentRefs.clear();
     const notificationCount = Number(result.deleted.notifications) || 0;
     $('#clearAllDataMsg').textContent = `All saved data erased (${total} records), including ${notificationCount} notification log entr${notificationCount === 1 ? 'y' : 'ies'}. Accounts were reset to configured credentials and settings returned to defaults.`;
     showAccountToast(`All saved data erased (${total} records). Accounts and settings were reset to configured defaults.`);
