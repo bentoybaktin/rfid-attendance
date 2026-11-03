@@ -1,34 +1,14 @@
-/*
- * RFID gate reader: ESP32 + RC522 -> POST /api/tap
- *
- * Libraries (Arduino Library Manager): "MFRC522" by GithubCommunity
- * Board: "ESP32 Dev Module"
- *
- * Wiring (RC522 runs on 3.3V - never 5V):
- *   RC522 SDA(SS) -> GPIO 5      RC522 SCK  -> GPIO 18
- *   RC522 MOSI    -> GPIO 23     RC522 MISO -> GPIO 19
- *   RC522 RST     -> GPIO 22     RC522 3.3V -> 3V3,  GND -> GND
- *   Green LED -> GPIO 25 (+ 220 ohm to GND)
- *   Red LED   -> GPIO 26 (+ 220 ohm to GND)
- *   Buzzer    -> GPIO 27 (active buzzer, other leg to GND)
- *
- * Offline behaviour: if the server can't be reached, taps are kept in a small
- * RAM queue with their timestamp (from NTP) and replayed when Wi-Fi/server is back.
- * The queue is lost if the reader loses power; for stronger guarantees store it
- * in LittleFS or on an SD card.
- */
+
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <SPI.h>
 #include <MFRC522.h>
 #include <time.h>
 
-// ---- CONFIGURE THESE ----
 const char* WIFI_SSID   = "YOUR_WIFI_NAME";
 const char* WIFI_PASS   = "YOUR_WIFI_PASSWORD";
-const char* SERVER_URL  = "http://192.168.1.10:3000/api/tap";  // PC/server running the app
-const char* DEVICE_KEY  = "change-me-device-key";              // must match DEVICE_KEY on the server
-// -------------------------
+const char* SERVER_URL  = "http://192.168.1.10:3000/api/tap";  
+const char* DEVICE_KEY  = "change-me-device-key";             
 
 #define SS_PIN   5
 #define RST_PIN  22
@@ -60,7 +40,7 @@ void signal(bool ok) {
   digitalWrite(LED_ERR, LOW);
 }
 
-// Local time as "YYYY-MM-DDTHH:MM:SS" (Philippines is UTC+8), or "" if NTP isn't synced yet.
+
 String nowTs() {
   struct tm t;
   if (!getLocalTime(&t, 50)) return "";
@@ -77,7 +57,7 @@ void connectWifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) delay(200);
 }
 
-// Returns the HTTP status code, or -1 if the server could not be reached.
+
 int postTap(const String& uid, const String& ts) {
   lastResponseBody = "";
   if (WiFi.status() != WL_CONNECTED) return -1;
@@ -98,8 +78,7 @@ int postTap(const String& uid, const String& ts) {
 void flushQueue() {
   while (qLen > 0) {
     int code = postTap(queue[0].uid, queue[0].ts);
-    if (code < 0) return;  // still offline, try later
-    // Any HTTP answer (200 ok, 404 unknown card, 409 duplicate) means the server handled it.
+    if (code < 0) return;  
     for (int i = 1; i < qLen; i++) queue[i - 1] = queue[i];
     qLen--;
   }
@@ -139,7 +118,7 @@ void loop() {
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
 
-  // Ignore the same card held against the reader for a moment.
+ 
   if (uid == lastUid && millis() - lastUidMs < 2000) return;
   lastUid = uid;
   lastUidMs = millis();
@@ -147,10 +126,10 @@ void loop() {
   String ts = nowTs();
   Serial.println("Tap: " + uid + " " + ts);
 
-  int code = postTap(uid, "");  // live tap: let the server stamp the time
+  int code = postTap(uid, ""); 
   if (code < 0) {
     if (qLen < QMAX) queue[qLen++] = { uid, ts };
-    signal(true);  // card was read; it will sync later
+    signal(true);  
     return;
   }
   if (lastResponseBody.length()) Serial.println("Reader response: " + lastResponseBody);
