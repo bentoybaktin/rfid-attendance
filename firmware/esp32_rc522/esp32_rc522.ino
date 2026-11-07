@@ -1,14 +1,12 @@
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <SPI.h>
 #include <MFRC522.h>
+#include <string.h>
 #include <time.h>
-
-const char* WIFI_SSID   = "YOUR_WIFI_NAME";
-const char* WIFI_PASS   = "YOUR_WIFI_PASSWORD";
-const char* SERVER_URL  = "http://192.168.1.10:3000/api/tap";  
-const char* DEVICE_KEY  = "change-me-device-key";             
+#include "secrets.h"
 
 #define SS_PIN   5
 #define RST_PIN  22
@@ -40,12 +38,8 @@ void signal(bool ok) {
   digitalWrite(LED_ERR, LOW);
 }
 
-<<<<<<< HEAD
 
 String nowTs() {
-=======
-]String nowTs() {
->>>>>>> a738fed (Initial Commit)
   struct tm t;
   if (!getLocalTime(&t, 50)) return "";
   char b[24];
@@ -61,17 +55,29 @@ void connectWifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) delay(200);
 }
 
-<<<<<<< HEAD
 
 int postTap(const String& uid, const String& ts) {
-=======
-]int postTap(const String& uid, const String& ts) {
->>>>>>> a738fed (Initial Commit)
   lastResponseBody = "";
   if (WiFi.status() != WL_CONNECTED) return -1;
+  if (!SERVER_URL ||
+      strncmp(SERVER_URL, "https://", 8) != 0 ||
+      !SERVER_ROOT_CA ||
+      !SERVER_ROOT_CA[0] ||
+      !DEVICE_KEY ||
+      !DEVICE_KEY[0] ||
+      strcmp(DEVICE_KEY, "REPLACE_WITH_DEVICE_KEY") == 0) {
+    Serial.println("RFID POST blocked: configure HTTPS, its root CA, and DEVICE_KEY in secrets.h.");
+    return -1;
+  }
+  if (time(nullptr) < 1700000000) {
+    Serial.println("RFID POST blocked: waiting for network time before validating the TLS certificate.");
+    return -1;
+  }
+  WiFiClientSecure secureClient;
+  secureClient.setCACert(SERVER_ROOT_CA);
   HTTPClient http;
   http.setTimeout(4000);
-  http.begin(SERVER_URL);
+  if (!http.begin(secureClient, SERVER_URL)) return -1;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("x-device-key", DEVICE_KEY);
   String body = "{\"uid\":\"" + uid + "\"";
@@ -87,11 +93,8 @@ void flushQueue() {
   while (qLen > 0) {
     int code = postTap(queue[0].uid, queue[0].ts);
     if (code < 0) return;  
-<<<<<<< HEAD
-=======
 
     // Any HTTP answer (200 ok, 404 unknown card, 409 duplicate) means the server handled it.
->>>>>>> a738fed (Initial Commit)
     for (int i = 1; i < qLen; i++) queue[i - 1] = queue[i];
     qLen--;
   }
@@ -131,10 +134,6 @@ void loop() {
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
 
-<<<<<<< HEAD
- 
-=======
->>>>>>> a738fed (Initial Commit)
   if (uid == lastUid && millis() - lastUidMs < 2000) return;
   lastUid = uid;
   lastUidMs = millis();
@@ -142,11 +141,7 @@ void loop() {
   String ts = nowTs();
   Serial.println("Tap: " + uid + " " + ts);
 
-<<<<<<< HEAD
-  int code = postTap(uid, ""); 
-=======
   int code = postTap(uid, "");  
->>>>>>> a738fed (Initial Commit)
   if (code < 0) {
     if (qLen < QMAX) queue[qLen++] = { uid, ts };
     signal(true);  

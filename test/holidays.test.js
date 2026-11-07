@@ -6,6 +6,7 @@ process.env.ADMIN_EMAIL = 'holiday-admin@example.com';
 process.env.ADMIN_PASSWORD = 'test-holiday-admin-password';
 process.env.USER_EMAIL = 'holiday-user@example.com';
 process.env.USER_PASSWORD = 'test-holiday-user-password';
+process.env.DEVICE_KEY = 'test-holiday-device-key';
 process.env.AUTH_SECRET = 'test-holiday-auth-secret-with-enough-entropy';
 
 const { app, appReady } = require('../server');

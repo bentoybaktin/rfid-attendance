@@ -4,3 +4,4 @@ data.db-shm
 data.db-wal
 .env*
 !.env.example
+firmware/esp32_rc522/secrets.h

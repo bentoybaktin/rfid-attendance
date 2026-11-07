@@ -12,11 +12,11 @@ Stack: Node.js + Express + SQLite locally or Neon Postgres on Vercel, plain HTML
 
 ```bash
 npm install
-npm run seed        # demo school: 30 students, ~45 days of history
-npm start           # http://localhost:3000
+npm run seed              # demo school: 30 students, ~45 days of history
+npm start                 # http://localhost:3000
 ```
 
-Sign in with the admin email (default `admin@example.com`, password `admin123`) or user email (default `user@example.com`, password `user1234`). Change the default credentials before real use. Admins can add, edit, and remove students and manage settings. The user account can add students to sections created by the admin, but cannot view, edit, or remove student records; duplicate names, LRN values, or RFID cards must be resolved by the admin. Users also see the latest recognized card tap or scan feedback, along with student details when the card is registered. Set the four class times in **Settings** before scanning or using **Test without hardware**. Open "Early warning" to see the demo students who were seeded with worrying patterns.
+Before starting the server, copy `.env.example` to `.env` and replace the admin password, user password, and device key with unique values. The server refuses to start if any of these values is missing. Sign in with the configured admin or user email and password. Admins can add, edit, and remove students and manage settings. The user account can add students to sections created by the admin, but cannot view, edit, or remove student records; duplicate names, LRN values, or RFID cards must be resolved by the admin. Users also see the latest recognized card tap or scan feedback, along with student details when the card is registered. Set the four class times in **Settings** before scanning or using **Test without hardware**. Open "Early warning" to see the demo students who were seeded with worrying patterns.
 
 Admins can open a student's shareable detail URL by selecting their name in **Students**. These `/students/<id>` links require an authenticated admin account.
 
@@ -51,7 +51,7 @@ Vercel runs the Node.js app as a serverless function. Use Neon Postgres for pers
    - SMS gateway variables only if using a real phone gateway.
    - `RESEND_API_KEY` and `EMAIL_FROM` to enable parent email notifications. Create a Resend account, verify a sending domain, create an API key, and set `EMAIL_FROM` to an address on that verified domain (for example, `Attendance <attendance@school.example>`).
 5. Deploy. On its first request, the app creates the Neon schema and configured accounts. The dashboard is served from `public/`, and `/api/*` is routed to the Express function.
-6. Open the deployed URL and sign in. In `firmware/esp32_rc522/esp32_rc522.ino`, set `SERVER_URL` to `https://YOUR-VERCEL-DOMAIN/api/tap` and `DEVICE_KEY` to match Vercel, then upload the sketch.
+6. Open the deployed URL and sign in. Copy `firmware/esp32_rc522/secrets.h.example` to `secrets.h`, set `SERVER_URL` to `https://YOUR-VERCEL-DOMAIN/api/tap`, set `DEVICE_KEY` to match Vercel, and add the root CA certificate for the server before uploading the sketch.
 
 Keep Neon credentials and all secrets in Vercel's environment-variable settings, never in source control. A new Neon database starts empty; data in local `data.db` is not imported automatically. Migrate and verify real records separately before relying on them. Never run the demo seeder against real attendance data.
 
@@ -128,7 +128,7 @@ Scores only the selected calendar month (`risk.js`). The current month is select
 
 ## Hardware
 
-Per gate: ESP32 dev board, RC522 module, two LEDs, buzzer (roughly a few hundred pesos). Wiring and the sketch are in `firmware/esp32_rc522/esp32_rc522.ino`. Set the Wi-Fi name, the server URL (local address for local development, or your Vercel URL after deployment) and `DEVICE_KEY`.
+Per gate: ESP32 dev board, RC522 module, two LEDs, buzzer (roughly a few hundred pesos). Wiring and the sketch are in `firmware/esp32_rc522/esp32_rc522.ino`. Copy `firmware/esp32_rc522/secrets.h.example` to `firmware/esp32_rc522/secrets.h` and configure the Wi-Fi name and password, HTTPS server URL, matching `DEVICE_KEY`, and the TLS root CA certificate that validates the server. `secrets.h` is ignored by Git. The sketch refuses to send scans over HTTP or without a configured CA and device key.
 
 - The reader sends the card UID to `POST /api/tap` with header `x-device-key`.
 - A Windows reader that types the card UID like a keyboard can scan from the user account's **Student scan** page. Keep that page open and active; scans are captured automatically and submitted using the signed-in user's session. While the add-student form is open, a quick reader scan fills only the RFID UID field, not the currently focused text field.
@@ -141,8 +141,8 @@ This stores personal data of minors. Before going live:
 
 - Get written parental consent for the data collected and for SMS (the consent checkbox records the decision; keep the signed forms).
 - Have the school's Data Protection Officer review it, and add the system to your privacy notice.
-- Change `ADMIN_PASSWORD`, `USER_PASSWORD`, and `DEVICE_KEY`. Vercel provides HTTPS for deployed sites.
-- Change the default admin and user credentials before use. Admins can manage students and settings; user accounts can use the live student-tap display and submit new student registrations.
+- Use unique `ADMIN_PASSWORD`, `USER_PASSWORD`, and `DEVICE_KEY` values. Vercel provides HTTPS for deployed sites.
+- Configure unique admin and user credentials before use. Admins can manage students and settings; user accounts can use the live student-tap display and submit new student registrations.
 - Back up the active database regularly and restrict access to the server.
 - Decide how long attendance data is kept and delete it afterwards.
 

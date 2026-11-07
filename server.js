@@ -21,15 +21,21 @@ const { computeRisk } = require('./risk');
 const { sendAbsentNotices } = require('./notify');
 
 const PORT = process.env.PORT || 3000;
-const DEVICE_KEY = process.env.DEVICE_KEY || 'change-me-device-key';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const DEVICE_KEY = process.env.DEVICE_KEY;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 const ADMIN_USERNAME = process.env.ADMIN_EMAIL || process.env.ADMIN_USERNAME || 'admin@jhs.local';
 const USER_USERNAME = process.env.USER_EMAIL || process.env.USER_USERNAME || 'user@jhs.local';
-const USER_PASSWORD = process.env.USER_PASSWORD || 'user1234';
+const USER_PASSWORD = process.env.USER_PASSWORD;
+
+for (const name of ['ADMIN_PASSWORD', 'USER_PASSWORD', 'DEVICE_KEY']) {
+  if (!process.env[name] || !process.env[name].trim()) {
+    throw new Error(`${name} must be configured before starting the server`);
+  }
+}
 
 if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
-  for (const name of ['ADMIN_PASSWORD', 'USER_PASSWORD', 'DEVICE_KEY', 'AUTH_SECRET']) {
-    if (!process.env[name]) throw new Error(`${name} must be configured for production deployments`);
+  if (!process.env.AUTH_SECRET) {
+    throw new Error('AUTH_SECRET must be configured for production deployments');
   }
   if (!process.env.ADMIN_EMAIL && !process.env.ADMIN_USERNAME) {
     throw new Error('ADMIN_EMAIL must be configured for production deployments');
@@ -37,12 +43,6 @@ if (process.env.VERCEL || process.env.NODE_ENV === 'production') {
   if (!process.env.USER_EMAIL && !process.env.USER_USERNAME) {
     throw new Error('USER_EMAIL must be configured for production deployments');
   }
-}
-if (!process.env.ADMIN_PASSWORD || !process.env.DEVICE_KEY) {
-  console.warn('WARNING: using default ADMIN_PASSWORD / DEVICE_KEY. Set them before real use.');
-}
-if (!process.env.USER_PASSWORD) {
-  console.warn('WARNING: using default USER_PASSWORD. Set it before real use.');
 }
 
 function passwordHash(password, salt) {
