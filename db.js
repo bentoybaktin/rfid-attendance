@@ -143,6 +143,18 @@ CREATE TABLE IF NOT EXISTS students(
 );
 ALTER TABLE students ADD COLUMN IF NOT EXISTS parent_email TEXT;
 ALTER TABLE students ADD COLUMN IF NOT EXISTS email_consent INTEGER DEFAULT 0;
+CREATE TABLE IF NOT EXISTS student_enrollment_requests(
+  id SERIAL PRIMARY KEY, lrn TEXT NOT NULL, name TEXT NOT NULL, surname TEXT NOT NULL,
+  first_name TEXT NOT NULL, middle_name TEXT, name_extension TEXT, grade INTEGER NOT NULL,
+  section TEXT NOT NULL, rfid_uid TEXT NOT NULL, parent_name TEXT, parent_phone TEXT,
+  consent INTEGER DEFAULT 0, parent_email TEXT, email_consent INTEGER DEFAULT 0,
+  submitted_by INTEGER NOT NULL, submitted_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending',
+  reviewed_by INTEGER, reviewed_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollment_requests_pending_lrn
+  ON student_enrollment_requests(lrn) WHERE status='pending';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollment_requests_pending_rfid
+  ON student_enrollment_requests(rfid_uid) WHERE status='pending';
 CREATE TABLE IF NOT EXISTS scans(
   id SERIAL PRIMARY KEY, student_id INTEGER NOT NULL, uid TEXT, ts TEXT NOT NULL,
   date TEXT NOT NULL, type TEXT NOT NULL
@@ -177,7 +189,9 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS recipient TEXT;
 CREATE TABLE IF NOT EXISTS absence_notices(
   student_id INTEGER NOT NULL, date TEXT NOT NULL, PRIMARY KEY(student_id, date)
 );
-CREATE TABLE IF NOT EXISTS holidays(date TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE IF NOT EXISTS holidays(date TEXT PRIMARY KEY, name TEXT, reason TEXT NOT NULL DEFAULT '');
+ALTER TABLE holidays ADD COLUMN IF NOT EXISTS reason TEXT NOT NULL DEFAULT '';
+ALTER TABLE holidays ADD COLUMN IF NOT EXISTS end_date TEXT;
 CREATE TABLE IF NOT EXISTS sections(grade INTEGER NOT NULL, section TEXT NOT NULL, PRIMARY KEY(grade, section));
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS auth_users(
@@ -224,6 +238,19 @@ if (usePostgres) {
       parent_name TEXT, parent_phone TEXT, consent INTEGER DEFAULT 0,
       parent_email TEXT, email_consent INTEGER DEFAULT 0, active INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS student_enrollment_requests(
+      id INTEGER PRIMARY KEY AUTOINCREMENT, lrn TEXT NOT NULL, name TEXT NOT NULL,
+      surname TEXT NOT NULL, first_name TEXT NOT NULL, middle_name TEXT,
+      name_extension TEXT, grade INTEGER NOT NULL, section TEXT NOT NULL,
+      rfid_uid TEXT NOT NULL, parent_name TEXT, parent_phone TEXT,
+      consent INTEGER DEFAULT 0, parent_email TEXT, email_consent INTEGER DEFAULT 0,
+      submitted_by INTEGER NOT NULL, submitted_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', reviewed_by INTEGER, reviewed_at TEXT
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollment_requests_pending_lrn
+      ON student_enrollment_requests(lrn) WHERE status='pending';
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_enrollment_requests_pending_rfid
+      ON student_enrollment_requests(rfid_uid) WHERE status='pending';
     CREATE TABLE IF NOT EXISTS scans(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER NOT NULL,uid TEXT,ts TEXT NOT NULL,date TEXT NOT NULL,type TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS tap_state(student_id INTEGER NOT NULL,date TEXT NOT NULL,ts TEXT NOT NULL,type TEXT NOT NULL,PRIMARY KEY(student_id,date));
     CREATE TABLE IF NOT EXISTS attendance(student_id INTEGER NOT NULL,date TEXT NOT NULL,time_in TEXT,time_out TEXT,status TEXT NOT NULL,morning_in TEXT,morning_out TEXT,afternoon_in TEXT,afternoon_out TEXT,PRIMARY KEY(student_id,date));
@@ -231,7 +258,7 @@ if (usePostgres) {
     CREATE TABLE IF NOT EXISTS scan_attempts(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,uid TEXT,ts TEXT NOT NULL,date TEXT NOT NULL,code TEXT NOT NULL,message TEXT NOT NULL,expected_type TEXT);
     CREATE TABLE IF NOT EXISTS notifications(id INTEGER PRIMARY KEY AUTOINCREMENT,student_id INTEGER,kind TEXT,date TEXT,phone TEXT,message TEXT,status TEXT,provider TEXT,ts TEXT,channel TEXT DEFAULT 'sms',recipient TEXT);
     CREATE TABLE IF NOT EXISTS absence_notices(student_id INTEGER NOT NULL,date TEXT NOT NULL,PRIMARY KEY(student_id,date));
-    CREATE TABLE IF NOT EXISTS holidays(date TEXT PRIMARY KEY,name TEXT);
+    CREATE TABLE IF NOT EXISTS holidays(date TEXT PRIMARY KEY,name TEXT,reason TEXT NOT NULL DEFAULT '',end_date TEXT);
     CREATE TABLE IF NOT EXISTS sections(grade INTEGER NOT NULL,section TEXT NOT NULL,PRIMARY KEY(grade,section));
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
     CREATE TABLE IF NOT EXISTS auth_users(id INTEGER PRIMARY KEY AUTOINCREMENT,username TEXT NOT NULL UNIQUE COLLATE NOCASE,role TEXT NOT NULL UNIQUE CHECK(role IN ('admin','user')),salt TEXT NOT NULL,password_hash TEXT NOT NULL);
@@ -259,6 +286,9 @@ if (usePostgres) {
   for (const [name, type] of [['channel', "TEXT DEFAULT 'sms'"], ['recipient', 'TEXT']]) {
     if (!notificationColumns.has(name)) sqlite.exec(`ALTER TABLE notifications ADD COLUMN ${name} ${type}`);
   }
+  const holidayColumns = new Set(sqlite.prepare('PRAGMA table_info(holidays)').all().map((column) => column.name));
+  if (!holidayColumns.has('reason')) sqlite.exec("ALTER TABLE holidays ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
+  if (!holidayColumns.has('end_date')) sqlite.exec('ALTER TABLE holidays ADD COLUMN end_date TEXT');
   sqlite.exec('UPDATE attendance SET morning_in=time_in WHERE morning_in IS NULL AND time_in IS NOT NULL');
   sqlite.exec('UPDATE attendance SET morning_out=time_out WHERE morning_out IS NULL AND time_out IS NOT NULL');
   sqlite.prepare('INSERT OR IGNORE INTO sections(grade,section) SELECT DISTINCT grade,section FROM students').run();
@@ -316,7 +346,12 @@ function addDays(date, count) {
   return result.toISOString().slice(0, 10);
 }
 async function holidaySet() {
-  return new Set((await db.prepare('SELECT date FROM holidays').all()).map((row) => row.date));
+  const holidays = new Set();
+  for (const row of await db.prepare('SELECT date,end_date FROM holidays').all()) {
+    const endDate = row.end_date || row.date;
+    for (let date = row.date; date <= endDate; date = addDays(date, 1)) holidays.add(date);
+  }
+  return holidays;
 }
 async function isSchoolDay(date, holidays) {
   const day = new Date(date + 'T00:00:00Z').getUTCDay();

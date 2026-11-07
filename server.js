@@ -547,8 +547,12 @@ app.get('/api/user/latest', async (req, res) => {
     latest.display_name = displayStudentName(latest);
     latest.full_name = fullStudentName(latest);
   }
+  const today = nowManila().date;
   res.json({
     school_name: (await allSettings()).school_name,
+    holiday: await db.prepare(
+      'SELECT date,end_date,name,reason FROM holidays WHERE date<=? AND COALESCE(end_date,date)>=? ORDER BY date DESC LIMIT 1'
+    ).get(today, today) || null,
     latest,
     scan_cursor: Number(scanCursor.id),
     attempt_cursor: Number(attemptCursor.id),
@@ -782,9 +786,21 @@ app.get('/api/holidays', async (req, res) =>
   res.json(await db.prepare('SELECT * FROM holidays ORDER BY date DESC').all())
 );
 app.post('/api/holidays', async (req, res) => {
-  const { date, name } = req.body;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) return res.status(400).json({ error: 'Invalid date' });
-  await db.prepare('INSERT INTO holidays(date,name) VALUES(?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name').run(date, name || 'Holiday');
+  const { date, name, reason } = req.body;
+  const endDate = req.body.end_date || date;
+  const isValidDate = (value) => {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsedDate = new Date(`${value}T00:00:00.000Z`);
+    return !Number.isNaN(parsedDate.getTime()) && parsedDate.toISOString().slice(0, 10) === value;
+  };
+  if (!isValidDate(date) || !isValidDate(endDate)) return res.status(400).json({ error: 'Invalid date range' });
+  if (endDate < date) return res.status(400).json({ error: 'Until date must be on or after the start date' });
+  const cleanName = typeof name === 'string' ? name.trim() : '';
+  const cleanReason = typeof reason === 'string' ? reason.trim() : '';
+  if (!cleanName || cleanName.length > 120) return res.status(400).json({ error: 'Enter a holiday or suspension name up to 120 characters' });
+  if (!cleanReason || cleanReason.length > 2000) return res.status(400).json({ error: 'Enter a suspension reason up to 2000 characters' });
+  await db.prepare('INSERT INTO holidays(date,name,reason,end_date) VALUES(?,?,?,?) ON CONFLICT(date) DO UPDATE SET name=excluded.name,reason=excluded.reason,end_date=excluded.end_date')
+    .run(date, cleanName, cleanReason, endDate);
   res.json({ ok: true });
 });
 app.delete('/api/holidays/:date', async (req, res) => {
@@ -794,11 +810,13 @@ app.delete('/api/holidays/:date', async (req, res) => {
 
 // ---------- students ----------
 app.get('/api/classes', async (req, res) =>
-  res.json(
-    await db
-      .prepare('SELECT grade, section FROM sections ORDER BY grade, section')
-      .all()
-  )
+  res.json(await db.prepare(
+    `SELECT sec.grade,sec.section,COUNT(st.id) AS student_count
+     FROM sections sec
+     LEFT JOIN students st ON st.grade=sec.grade AND st.section=sec.section AND st.active=1
+     GROUP BY sec.grade,sec.section
+     ORDER BY sec.grade,sec.section`
+  ).all())
 );
 app.post('/api/classes', async (req, res) => {
   const grade = Number(req.body.grade);
@@ -818,6 +836,63 @@ app.post('/api/classes', async (req, res) => {
     }
     throw error;
   }
+});
+app.put('/api/classes', async (req, res) => {
+  const grade = Number(req.body.grade);
+  const oldSection = typeof req.body.old_section === 'string' ? req.body.old_section.trim() : '';
+  const section = typeof req.body.section === 'string' ? req.body.section.trim() : '';
+  if (!Number.isInteger(grade) || grade < 7 || grade > 12) {
+    return res.status(400).json({ error: 'Grade must be between 7 and 12' });
+  }
+  if (!oldSection || oldSection.length > 100 || oldSection.includes('::') ||
+      !section || section.length > 100 || section.includes('::')) {
+    return res.status(400).json({ error: 'Enter a section name up to 100 characters' });
+  }
+  try {
+    const updated = await db.transaction(async () => {
+      const existing = await db.prepare('SELECT section FROM sections WHERE grade=? AND section=?').get(grade, oldSection);
+      if (!existing) return false;
+      const duplicate = await db.prepare('SELECT section FROM sections WHERE grade=? AND section=?').get(grade, section);
+      if (duplicate && section !== oldSection) return null;
+      await db.prepare('UPDATE students SET section=? WHERE grade=? AND section=?').run(section, grade, oldSection);
+      await db.prepare('UPDATE sections SET section=? WHERE grade=? AND section=?').run(section, grade, oldSection);
+      return true;
+    });
+    if (updated === false) return res.status(404).json({ error: 'Section not found' });
+    if (updated === null) return res.status(409).json({ error: 'That grade and section already exists' });
+    res.json({ ok: true });
+  } catch (error) {
+    if (error.errcode === 1555 || error.errcode === 2067 || error.code === '23505') {
+      return res.status(409).json({ error: 'That grade and section already exists' });
+    }
+    throw error;
+  }
+});
+app.delete('/api/classes', async (req, res) => {
+  const grade = Number(req.body.grade);
+  const section = typeof req.body.section === 'string' ? req.body.section.trim() : '';
+  if (!Number.isInteger(grade) || grade < 7 || grade > 12 || !section || section.length > 100) {
+    return res.status(400).json({ error: 'Choose a valid grade and section' });
+  }
+  const result = await db.transaction(async () => {
+    const existing = await db.prepare('SELECT section FROM sections WHERE grade=? AND section=?').get(grade, section);
+    if (!existing) return { status: 404 };
+    const assigned = await db.prepare(
+      'SELECT COUNT(*) AS count FROM students WHERE grade=? AND section=? AND active=1'
+    ).get(grade, section);
+    if (Number(assigned.count) > 0) return { status: 409, count: Number(assigned.count) };
+    await db.prepare('DELETE FROM sections WHERE grade=? AND section=?').run(grade, section);
+    return { status: 200 };
+  });
+  if (result.status === 404) return res.status(404).json({ error: 'Section not found' });
+  if (result.status === 409) {
+    const assignedStudents = result.count === 1 ? '1 active student is assigned' : `${result.count} active students are assigned`;
+    const nextStep = result.count === 1 ? 'move the student' : 'move the students';
+    return res.status(409).json({
+      error: `Cannot delete this section while ${assignedStudents} to it. Rename it or ${nextStep} first.`,
+    });
+  }
+  res.json({ ok: true });
 });
 app.get('/api/students', async (req, res) =>
   res.json((await db.prepare(
@@ -892,46 +967,140 @@ app.post('/api/user/students', async (req, res) => {
     return res.status(400).json({ error: 'Scan a valid RFID card before adding a student' });
   }
 
-  const duplicateCard = s.rfid_uid
-    ? await db.prepare('SELECT id FROM students WHERE rfid_uid=?').get(s.rfid_uid)
-    : null;
-  if (duplicateCard) {
-    return res.status(409).json({ error: 'This student RFID already exists. Contact the admin to update the RFID.' });
-  }
-  const duplicateName = await db.prepare(
+  const duplicateStudent = await db.prepare(
     `SELECT id FROM students
      WHERE lower(name)=lower(?)
+        OR lrn=?
+        OR rfid_uid=?
         OR (lower(trim(COALESCE(surname,'')))=lower(?)
           AND lower(trim(COALESCE(first_name,'')))=lower(?)
           AND lower(trim(COALESCE(middle_name,'')))=lower(?)
           AND lower(trim(COALESCE(name_extension,'')))=lower(?))
      LIMIT 1`
-  ).get(s.name, s.surname, s.first_name, s.middle_name || '', s.name_extension || '');
-  if (duplicateName) {
+  ).get(s.name, s.lrn, s.rfid_uid, s.surname, s.first_name, s.middle_name || '', s.name_extension || '');
+  if (duplicateStudent) {
     return res.status(409).json({
-      error: "This student is already enrolled. Please contact the admin to update the student's information.",
+      error: "This student's LRN, name, or RFID is already enrolled. Contact the admin to review it.",
     });
   }
 
   try {
     const result = await db.prepare(
-      `INSERT INTO students(lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,parent_name,parent_phone,consent,parent_email,email_consent)
-       VALUES(@lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,@parent_name,@parent_phone,@consent,@parent_email,@email_consent)
+      `INSERT INTO student_enrollment_requests(
+         lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,
+         parent_name,parent_phone,consent,parent_email,email_consent,submitted_by,submitted_at
+       )
+       VALUES(
+         @lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,
+         @parent_name,@parent_phone,@consent,@parent_email,@email_consent,@submitted_by,@submitted_at
+       )
        RETURNING id`
-    ).get(s);
-    if (s.rfid_uid) await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(s.rfid_uid);
-    res.status(201).json({
-      id: Number(result.id),
-      student_ref: null,
-      student_key: encodeStudentRef(Number(result.id)),
+    ).get({
+      ...s,
+      submitted_by: req.auth.userId,
+      submitted_at: nowManila().ts,
     });
+    res.status(202).json({ request_id: Number(result.id), status: 'pending' });
   } catch (error) {
     if (error.code === '23505' || error.errcode === 1555 || error.errcode === 2067) {
-      const existingCard = s.rfid_uid && await db.prepare('SELECT id FROM students WHERE rfid_uid=?').get(s.rfid_uid);
-      if (existingCard) {
-        return res.status(409).json({ error: 'This student RFID already exists. Contact the admin to update the RFID.' });
+      return res.status(409).json({ error: 'A pending enrollment request already uses this LRN or RFID card.' });
+    }
+    throw error;
+  }
+});
+
+app.get('/api/enrollment-requests', async (_req, res) => {
+  const requests = await db.prepare(
+    `SELECT id,lrn,name,surname,first_name,middle_name,name_extension,grade,section,
+            rfid_uid,parent_name,parent_phone,consent,parent_email,email_consent,submitted_at
+     FROM student_enrollment_requests
+     WHERE status='pending'
+     ORDER BY submitted_at,id`
+  ).all();
+  res.json(requests.map((request) => ({
+    ...request,
+    id: Number(request.id),
+    display_name: displayStudentName(request),
+  })));
+});
+
+app.post('/api/enrollment-requests/:id', async (req, res) => {
+  const requestId = Number(req.params.id);
+  if (!Number.isSafeInteger(requestId) || requestId < 1) {
+    return res.status(400).json({ error: 'Invalid enrollment request' });
+  }
+  const action = req.body.action;
+  if (action !== 'approve' && action !== 'reject') {
+    return res.status(400).json({ error: 'Choose approve or reject' });
+  }
+
+  try {
+    const outcome = await db.transaction(async () => {
+      const request = await db.prepare(
+        "SELECT * FROM student_enrollment_requests WHERE id=? AND status='pending'"
+      ).get(requestId);
+      if (!request) return { status: 404, error: 'Pending enrollment request not found' };
+
+      if (action === 'reject') {
+        await db.prepare(
+          "UPDATE student_enrollment_requests SET status='rejected',reviewed_by=?,reviewed_at=? WHERE id=? AND status='pending'"
+        ).run(req.auth.userId, nowManila().ts, requestId);
+        return { status: 200, action };
       }
-      return res.status(409).json({ error: 'This LRN already exists. Contact the admin to review the student record.' });
+
+      const duplicateStudent = await db.prepare(
+        `SELECT id FROM students
+         WHERE lrn=? OR rfid_uid=? OR lower(name)=lower(?)
+            OR (lower(trim(COALESCE(surname,'')))=lower(?)
+              AND lower(trim(COALESCE(first_name,'')))=lower(?)
+              AND lower(trim(COALESCE(middle_name,'')))=lower(?)
+              AND lower(trim(COALESCE(name_extension,'')))=lower(?))
+         LIMIT 1`
+      ).get(
+        request.lrn, request.rfid_uid, request.name, request.surname, request.first_name,
+        request.middle_name || '', request.name_extension || ''
+      );
+      if (duplicateStudent) {
+        return { status: 409, error: 'This LRN, name, or RFID is already assigned to an enrolled student' };
+      }
+
+      const student = await db.prepare(
+        `INSERT INTO students(
+           lrn,name,surname,first_name,middle_name,name_extension,grade,section,rfid_uid,
+           parent_name,parent_phone,consent,parent_email,email_consent
+         )
+         VALUES(
+           @lrn,@name,@surname,@first_name,@middle_name,@name_extension,@grade,@section,@rfid_uid,
+           @parent_name,@parent_phone,@consent,@parent_email,@email_consent
+         )
+         RETURNING id`
+      ).get({
+        lrn: request.lrn,
+        name: request.name,
+        surname: request.surname,
+        first_name: request.first_name,
+        middle_name: request.middle_name,
+        name_extension: request.name_extension,
+        grade: request.grade,
+        section: request.section,
+        rfid_uid: request.rfid_uid,
+        parent_name: request.parent_name,
+        parent_phone: request.parent_phone,
+        consent: request.consent,
+        parent_email: request.parent_email,
+        email_consent: request.email_consent,
+      });
+      await db.prepare(
+        "UPDATE student_enrollment_requests SET status='approved',reviewed_by=?,reviewed_at=? WHERE id=? AND status='pending'"
+      ).run(req.auth.userId, nowManila().ts, requestId);
+      await db.prepare('DELETE FROM unknown_scans WHERE uid=?').run(request.rfid_uid);
+      return { status: 200, action, student_id: Number(student.id) };
+    });
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error });
+    res.status(outcome.status).json({ ok: true, ...outcome });
+  } catch (error) {
+    if (error.code === '23505' || error.errcode === 1555 || error.errcode === 2067) {
+      return res.status(409).json({ error: 'This LRN or RFID card is already assigned to another student' });
     }
     throw error;
   }
@@ -1310,9 +1479,11 @@ app.get('/api/export/sf2.csv', async (req, res) => {
   const [y, m] = month.split('-').map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const days = await schoolDaysBetween(`${month}-01`, `${month}-${String(last).padStart(2, '0')}`);
+  const sectionName = c ? String(c.section) : '';
   const students = await db
     .prepare(
-      `SELECT * FROM students WHERE active=1 ${c ? 'AND grade=? AND section=?' : ''} ORDER BY grade, section, name`
+      `SELECT * FROM students WHERE active=1 ${c ? 'AND grade=? AND section=?' : ''}
+       ORDER BY grade,section,surname,first_name,middle_name,name`
     )
     .all(...(c ? [c.grade, c.section] : []));
   const att = new Map();
@@ -1323,11 +1494,29 @@ app.get('/api/export/sf2.csv', async (req, res) => {
 
   const today = nowManila().date;
   const rows = [
-    [`School Form 2 (style) - Daily attendance - ${month}`],
-    ['Legend: blank = present, L = late, H = half day (morning absent, afternoon present), x = absent'],
-    ['LRN', 'Name', 'Grade', 'Section', ...days.map((d) => Number(d.slice(8))), 'Attendance-day equivalents', 'Days late', 'Days absent', 'Half days'],
+    [`Monthly student attendance - ${month}`],
+    ['Section', c ? `Grade ${c.grade} - ${sectionName}` : 'All grades and sections'],
+    ['Attendance key', 'Blank = present', 'L = late', 'H = half day (morning absent, afternoon present)', 'x = absent', 'Future dates are blank'],
+    [
+      'No.',
+      'LRN',
+      'Student name (surname, first, middle, extension)',
+      'Grade',
+      'Section',
+      ...days.map((date) => {
+        const day = new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
+          weekday: 'short',
+          timeZone: 'UTC',
+        });
+        return `${date.slice(8)} (${day})`;
+      }),
+      'Days attended (half day = 0.5)',
+      'Days late',
+      'Days absent (half day = 0.5)',
+      'Half days',
+    ],
   ];
-  for (const s of students) {
+  for (const [index, s] of students.entries()) {
     let present = 0, late = 0, absent = 0, halfDays = 0;
     const cells = days.map((d) => {
       if (d > today) return '';
@@ -1338,7 +1527,7 @@ app.get('/api/export/sf2.csv', async (req, res) => {
       if (st === 'late') { late++; return 'L'; }
       return '';
     });
-    rows.push([s.lrn, s.name, s.grade, s.section, ...cells, present, late, absent, halfDays]);
+    rows.push([index + 1, s.lrn, fullStudentName(s), s.grade, s.section, ...cells, present, late, absent, halfDays]);
   }
   sendCsv(res, `sf2-${month}.csv`, rows);
 });

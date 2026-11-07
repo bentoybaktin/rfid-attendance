@@ -40,8 +40,12 @@ void signal(bool ok) {
   digitalWrite(LED_ERR, LOW);
 }
 
+<<<<<<< HEAD
 
 String nowTs() {
+=======
+]String nowTs() {
+>>>>>>> a738fed (Initial Commit)
   struct tm t;
   if (!getLocalTime(&t, 50)) return "";
   char b[24];
@@ -57,8 +61,12 @@ void connectWifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) delay(200);
 }
 
+<<<<<<< HEAD
 
 int postTap(const String& uid, const String& ts) {
+=======
+]int postTap(const String& uid, const String& ts) {
+>>>>>>> a738fed (Initial Commit)
   lastResponseBody = "";
   if (WiFi.status() != WL_CONNECTED) return -1;
   HTTPClient http;
@@ -79,6 +87,11 @@ void flushQueue() {
   while (qLen > 0) {
     int code = postTap(queue[0].uid, queue[0].ts);
     if (code < 0) return;  
+<<<<<<< HEAD
+=======
+
+    // Any HTTP answer (200 ok, 404 unknown card, 409 duplicate) means the server handled it.
+>>>>>>> a738fed (Initial Commit)
     for (int i = 1; i < qLen; i++) queue[i - 1] = queue[i];
     qLen--;
   }
@@ -118,7 +131,10 @@ void loop() {
   rfid.PICC_HaltA();
   rfid.PCD_StopCrypto1();
 
+<<<<<<< HEAD
  
+=======
+>>>>>>> a738fed (Initial Commit)
   if (uid == lastUid && millis() - lastUidMs < 2000) return;
   lastUid = uid;
   lastUidMs = millis();
@@ -126,7 +142,11 @@ void loop() {
   String ts = nowTs();
   Serial.println("Tap: " + uid + " " + ts);
 
+<<<<<<< HEAD
   int code = postTap(uid, ""); 
+=======
+  int code = postTap(uid, "");  
+>>>>>>> a738fed (Initial Commit)
   if (code < 0) {
     if (qLen < QMAX) queue[qLen++] = { uid, ts };
     signal(true);  

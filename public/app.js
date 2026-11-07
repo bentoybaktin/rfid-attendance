@@ -3,6 +3,21 @@ if (window.location.pathname === '/index.php') {
 }
 
 const $ = (s) => document.querySelector(s);
+const userClockFormatter = new Intl.DateTimeFormat('en-US', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: true,
+});
+const userDateFormatter = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
+const scanDateFormatter = new Intl.DateTimeFormat('en-US', {
+  dateStyle: 'long',
+  timeZone: 'UTC',
+});
 function clearLoadError() {
   $('#loadErrorMessage').textContent = '';
   $('#loadErrorCause').textContent = '';
@@ -396,6 +411,9 @@ function operationError(error, operation, resolution) {
   if (error instanceof TypeError) {
     return 'Cannot reach the server. Check your connection.';
   }
+  if (error && error.code === 'SCHEDULE_NOT_CONFIGURED') {
+    return 'Attendance is paused because the school schedule is incomplete. This is an administrator setup issue; ask them to set all four class times in Settings, then scan again.';
+  }
   if (error && error.status >= 500) {
     return 'The server encountered an error. Try again or contact the administrator.';
   }
@@ -439,9 +457,12 @@ const formatScanTime = (timestamp) => {
 };
 const formatUserLrn = (lrn) => String(lrn || '').replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ').trim();
 
-function setTheme(theme) {
+function setTheme(theme, animate = false) {
   const selectedTheme = theme === 'dark' ? 'dark' : 'light';
-  document.documentElement.dataset.theme = selectedTheme;
+  const root = document.documentElement;
+  const shouldAnimate = animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (shouldAnimate) root.classList.add('theme-transition-enabled');
+  root.dataset.theme = selectedTheme;
   localStorage.setItem('theme', selectedTheme);
   updateThemeControl(selectedTheme === 'dark');
 }
@@ -463,14 +484,15 @@ $('#rememberMe').checked = rememberMe;
 let settings = {};
 let classes = [];
 let students = [];
+let enrollmentRequests = [];
 let selectedStudentRefs = new Set();
 let studentMarkMode = false;
 let timer = null;
 let userTimer = null;
+let userClockTimer = null;
 let userHideTimer = null;
-let userHidScanTimer = null;
 let userHidScanInProgress = false;
-let userHidScanBuffer = '';
+let lastUnknownUserUid = '';
 let studentHidScanTimer = null;
 let studentHidScanBuffer = '';
 let studentHidScanLastKeyAt = 0;
@@ -523,8 +545,9 @@ async function api(path, opts = {}) {
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : await res.blob();
   if (!res.ok) {
-    const error = new Error((data && data.error) || `Request failed (HTTP ${res.status})`);
+    const error = new Error((data && (data.error || data.message)) || `Request failed (HTTP ${res.status})`);
     error.status = res.status;
+    if (data && typeof data === 'object' && typeof data.code === 'string') error.code = data.code;
     throw error;
   }
   if (cacheablePath) {
@@ -732,6 +755,8 @@ function logout() {
   username = '';
   clearTimeout(timer);
   clearTimeout(userTimer);
+  clearInterval(userClockTimer);
+  userClockTimer = null;
   clearTimeout(userHideTimer);
   showLogin();
 }
@@ -753,33 +778,70 @@ $('#userNavBackdrop').onclick = () => {
   $('#userNavToggle').setAttribute('aria-label', 'Open navigation');
 };
 
+function focusUserScanInput() {
+  if (role !== 'user' || $('#userApp').classList.contains('hidden') ||
+      !$('#stuFormPanel').classList.contains('hidden')) return;
+  const input = $('#userScanInput');
+  if (document.activeElement !== input) input.focus({ preventScroll: true });
+}
+
 async function submitUserHidScan(rawUid) {
   const uid = rawUid.replace(/[^0-9a-f]/gi, '').toUpperCase();
   if (!/^(?:[0-9A-F]{8}|[0-9A-F]{10}|[0-9A-F]{12}|[0-9A-F]{14}|[0-9A-F]{16}|[0-9A-F]{18}|[0-9A-F]{20})$/.test(uid)) {
-    $('#userStatus').textContent = 'Could not read a valid card UID. Tap the card again.';
     showUserNotice('error', 'Card could not be read', 'No valid card number received. Tap again or check the reader.');
+    focusUserScanInput();
     return;
   }
   if (userHidScanInProgress) return;
-  clearTimeout(userHidScanTimer);
   userHidScanInProgress = true;
-  $('#userStatus').textContent = 'Submitting card scan...';
   try {
     await api('/user/tap', { method: 'POST', body: { uid } });
   } catch (error) {
-    $('#userStatus').textContent = error.message;
     showOperationNotice(error, 'record this card scan', 'check that the reader and attendance service are connected, then tap again.');
   } finally {
     userHidScanInProgress = false;
+    focusUserScanInput();
   }
 }
 
 function finishUserHidScan() {
-  clearTimeout(userHidScanTimer);
-  const uid = userHidScanBuffer;
-  userHidScanBuffer = '';
+  const uid = $('#userScanInput').value;
+  $('#userScanInput').value = '';
   if (uid) submitUserHidScan(uid);
 }
+
+$('#userScanInput').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== 'Tab') return;
+  event.preventDefault();
+  finishUserHidScan();
+});
+
+$('#enrollUnknownCard').addEventListener('click', () => {
+  clearTimeout(userHideTimer);
+  openUserStudentForm(lastUnknownUserUid).catch((error) => {
+    showOperationNotice(error, 'open student enrollment', 'ask the administrator to confirm this account can add students.');
+  });
+});
+
+document.querySelectorAll('[data-user-demo]').forEach((button) => {
+  button.addEventListener('click', () => {
+    showUserDemoResult(button.dataset.userDemo);
+    focusUserScanInput();
+  });
+});
+
+$('#userApp').addEventListener('pointerdown', (event) => {
+  if (event.target instanceof Element &&
+      !event.target.closest('button, a, input, select, textarea, #userNav')) {
+    focusUserScanInput();
+  }
+});
+window.addEventListener('focus', focusUserScanInput);
+document.addEventListener('click', (event) => {
+  if (event.detail > 0 && role === 'user' && $('#userApp').contains(event.target)) {
+    setTimeout(focusUserScanInput, 0);
+  }
+});
 
 function restoreStudentHidScanTarget() {
   const target = studentHidScanTarget;
@@ -875,35 +937,6 @@ document.addEventListener('keydown', (event) => {
     (role === 'user' && !$('#userApp').classList.contains('hidden') && userAddMode);
   if (studentFormOpen && canCaptureStudentCard) {
     captureStudentHidScanKey(event);
-    return;
-  }
-  if (role !== 'user' || $('#userApp').classList.contains('hidden')) return;
-  if (!$('#stuFormPanel').classList.contains('hidden') ||
-      event.ctrlKey || event.altKey || event.metaKey) return;
-
-  const target = event.target;
-  if (target instanceof HTMLElement &&
-      (target.matches('input, textarea, select') || target.isContentEditable)) {
-    clearTimeout(userHidScanTimer);
-    userHidScanBuffer = '';
-    return;
-  }
-
-  if (event.key === 'Enter' || event.key === 'Tab') {
-    if (userHidScanBuffer) {
-      event.preventDefault();
-      finishUserHidScan();
-    }
-    return;
-  }
-  if (/^[0-9a-f]$/i.test(event.key)) {
-    userHidScanBuffer += event.key;
-    clearTimeout(userHidScanTimer);
-    userHidScanTimer = setTimeout(finishUserHidScan, 250);
-  } else if (!['Shift', 'CapsLock', 'Control', 'Alt', 'Meta'].includes(event.key) &&
-      !/^[\s:-]$/.test(event.key)) {
-    clearTimeout(userHidScanTimer);
-    userHidScanBuffer = '';
   }
 });
 
@@ -913,9 +946,15 @@ async function boot() {
     $('#login').classList.add('hidden');
     $('#app').classList.add('hidden');
     $('#userApp').classList.remove('hidden');
-    $('#userAccountName').textContent = `Signed in as ${username}`;
+    $('#userSignedInName').textContent = username;
+    $('#userSignedInAs').classList.toggle('hidden', !username);
+    updateUserClock();
+    clearInterval(userClockTimer);
+    userClockTimer = setInterval(updateUserClock, 1000);
+    focusUserScanInput();
     const baseline = await api('/user/latest?after=0');
     $('#userSchoolName').textContent = baseline.school_name;
+    updateUserHolidayOverlay(baseline.holiday);
     document.title = baseline.school_name + ' - Student Scan';
     lastUserScanId = Number(baseline.scan_cursor) || 0;
     lastUserAttemptId = Number(baseline.attempt_cursor) || 0;
@@ -959,9 +998,90 @@ async function boot() {
   }
 }
 
+function updateUserClock() {
+  const currentTime = new Date();
+  const clock = $('#userClock');
+  clock.dateTime = currentTime.toISOString();
+  clock.textContent = `${userDateFormatter.format(currentTime)} · ${userClockFormatter.format(currentTime)}`;
+}
+
+function formatScanDate(dateValue, timestamp) {
+  const date = dateValue || timestamp?.slice(0, 10);
+  if (!date) return '';
+  const parsedDate = new Date(`${date}T00:00:00Z`);
+  return Number.isNaN(parsedDate.getTime()) ? date : scanDateFormatter.format(parsedDate);
+}
+
+function showUserScanResult(student) {
+  const screen = $('#userApp .user-screen');
+  const checkIn = student.type === 'MORNING_IN' || student.type === 'AFTERNOON_IN';
+  const name = userStudentName(student) || student.name || 'Student';
+  const badge = $('#userTapResult');
+  const initials = name.trim().split(/\s+/).filter(Boolean);
+
+  screen.classList.add('has-scan');
+  screen.classList.remove('has-error');
+  $('#userIdleState').classList.add('hidden');
+  $('#userUnknownCard').classList.add('hidden');
+  $('#userStudentDetails').classList.remove('hidden');
+  $('#userStudentName').textContent = name;
+  $('#userStudentInitials').textContent = initials.length > 1
+    ? `${initials[0][0]}${initials[initials.length - 1][0]}`.toUpperCase()
+    : name.slice(0, 2).toUpperCase();
+  $('#userGradeSection').textContent = `Grade ${student.grade} · Section ${student.section}`;
+  $('#userStudentLrn').textContent = student.lrn ? `LRN ${formatUserLrn(student.lrn)}` : '';
+  $('#userStudentLrn').classList.toggle('hidden', !student.lrn);
+  $('#userTapDate').textContent = formatScanDate(student.date, student.ts);
+  $('#userTapTime').textContent = formatScanTime(student.ts);
+  badge.textContent = checkIn ? '✓ TIME IN' : '✓ TIME OUT';
+  badge.classList.remove('event-in', 'event-out');
+  badge.classList.add(checkIn ? 'event-in' : 'event-out');
+
+  clearTimeout(userHideTimer);
+  userHideTimer = setTimeout(hideUserStudent, 5000);
+}
+
+function showUnknownUserCard(uid = '') {
+  const screen = $('#userApp .user-screen');
+  lastUnknownUserUid = uid;
+  screen.classList.remove('has-scan');
+  screen.classList.add('has-error');
+  $('#userIdleState').classList.add('hidden');
+  $('#userStudentDetails').classList.add('hidden');
+  $('#userUnknownCard').classList.remove('hidden');
+  $('#enrollUnknownCard').classList.toggle('hidden', !uid);
+
+  clearTimeout(userHideTimer);
+  userHideTimer = setTimeout(hideUserStudent, 5000);
+}
+
+function showUserDemoResult(demo) {
+  if (demo === 'unknown') {
+    showUnknownUserCard();
+    return;
+  }
+  const now = new Date();
+  showUserScanResult({
+    first_name: 'Alex',
+    surname: 'Santos',
+    grade: '10',
+    section: 'A',
+    lrn: '123456789012',
+    date: now.toISOString().slice(0, 10),
+    ts: now.toISOString(),
+    type: demo === 'time-out' ? 'MORNING_OUT' : 'MORNING_IN',
+    status: 'present',
+  });
+}
+
 async function pollUserScreen() {
   const result = await api(`/user/latest?after=${lastUserScanId}&attempt_after=${lastUserAttemptId}`);
   $('#userSchoolName').textContent = result.school_name;
+  updateUserHolidayOverlay(result.holiday);
+  if (result.holiday) {
+    hideUserStudent();
+    return;
+  }
   lastUserScanId = Number(result.scan_cursor) || lastUserScanId;
   lastUserAttemptId = Number(result.attempt_cursor) || lastUserAttemptId;
   const student = result.latest;
@@ -969,52 +1089,42 @@ async function pollUserScreen() {
     return;
   }
   if (student.code) {
-    $('#userApp .user-screen').classList.remove('has-scan');
-    $('#userScreenTitle').classList.remove('hidden');
-    $('#userStatus').classList.remove('hidden');
-    $('#userStudentDetails').classList.add('hidden');
-    $('#userStatus').textContent = student.message;
-    if (student.code === 'UNKNOWN_CARD' && !userAddMode && $('#stuFormPanel').classList.contains('hidden')) {
-      $('#userStatus').textContent = 'Unregistered card detected. Opening student enrollment...';
-      openUserStudentForm(student.uid).catch((error) => {
-        $('#userStatus').textContent = `Could not open student enrollment: ${error.message}`;
-        showOperationNotice(error, 'open student enrollment', 'ask the administrator to confirm this account can add students.');
-      });
+    if (student.code === 'UNKNOWN_CARD') {
+      showUnknownUserCard(student.uid);
       return;
     }
-    clearTimeout(userHideTimer);
-    userHideTimer = setTimeout(hideUserStudent, 10000);
+    hideUserStudent();
+    showUserNotice('warning', 'Scan could not be recorded', student.message || 'Try scanning the card again.');
     return;
   }
-  const isCheckIn = student.type === 'MORNING_IN' || student.type === 'AFTERNOON_IN';
-  const time = formatScanTime(student.ts);
-  const studentName = userStudentName(student);
-  const resultLabel = isCheckIn ? 'Present' : 'Checked out';
-  const resultDetails = isCheckIn
-    ? `Time in ${time} · ${student.status === 'late' ? 'Late' : 'On time'}`
-    : `Time out ${time}`;
-  $('#userApp .user-screen').classList.add('has-scan');
-  $('#userScreenTitle').classList.add('hidden');
-  $('#userStatus').classList.add('hidden');
-  $('#userStudentDetails').classList.remove('hidden');
-  $('#userStudentName').textContent = studentName;
-  $('#userGradeSection').textContent = `Grade ${student.grade} · Section ${student.section}`;
-  $('#userStudentLrn').textContent = student.lrn ? `LRN ${formatUserLrn(student.lrn)}` : '';
-  $('#userStudentLrn').classList.toggle('hidden', !student.lrn);
-  $('#userTapResult').textContent = resultLabel;
-  $('#userTapTime').textContent = resultDetails;
-  $('#userTapResultBox').classList.toggle('event-in', isCheckIn);
-  $('#userTapResultBox').classList.toggle('event-out', !isCheckIn);
-  clearTimeout(userHideTimer);
-  userHideTimer = setTimeout(hideUserStudent, 10000);
+  showUserScanResult(student);
+}
+
+function updateUserHolidayOverlay(holiday) {
+  const overlay = $('#userHolidayOverlay');
+  overlay.classList.toggle('hidden', !holiday);
+  if (!holiday) return;
+  const dateRange = holiday.end_date && holiday.end_date !== holiday.date
+    ? `${holiday.date} – ${holiday.end_date}`
+    : holiday.date;
+  const notice = {
+    userHolidayTitle: holiday.name,
+    userHolidayDate: dateRange,
+    userHolidayReason: holiday.reason || 'No suspension reason was recorded for this date.',
+  };
+  Object.entries(notice).forEach(([id, value]) => {
+    const element = $(`#${id}`);
+    if (element.textContent !== value) element.textContent = value;
+  });
 }
 
 function hideUserStudent() {
-  $('#userApp .user-screen').classList.remove('has-scan');
+  $('#userApp .user-screen').classList.remove('has-scan', 'has-error');
+  $('#userIdleState').classList.remove('hidden');
   $('#userStudentDetails').classList.add('hidden');
-  $('#userScreenTitle').classList.remove('hidden');
-  $('#userStatus').classList.remove('hidden');
-  $('#userStatus').textContent = 'Waiting for a card tap...';
+  $('#userUnknownCard').classList.add('hidden');
+  lastUnknownUserUid = '';
+  focusUserScanInput();
 }
 
 function scheduleUserPoll() {
@@ -1507,8 +1617,58 @@ $('#attExport').onclick = () => {
 // ---------- students ----------
 async function loadStudents() {
   await refreshLookups();
+  enrollmentRequests = await api('/enrollment-requests');
   renderStudents();
+  renderEnrollmentRequests();
   await loadUnknown();
+}
+
+function renderEnrollmentRequests() {
+  const panel = $('#enrollmentRequestsPanel');
+  const list = $('#enrollmentRequestsList');
+  panel.classList.toggle('hidden', enrollmentRequests.length === 0);
+  list.innerHTML = enrollmentRequests.map((request) => {
+    const submittedAt = request.submitted_at
+      ? new Date(`${request.submitted_at}Z`).toLocaleString()
+      : 'Submission time unavailable';
+    const contacts = [
+      request.parent_name ? `Parent: ${esc(request.parent_name)}` : '',
+      request.parent_phone ? `Phone: ${esc(request.parent_phone)}` : '',
+      request.parent_email ? `Email: ${esc(request.parent_email)}` : '',
+    ].filter(Boolean).join(' · ');
+    return `<article class="enrollment-request">
+      <div class="enrollment-request-info">
+        <strong>${esc(request.display_name || request.name)}</strong>
+        <span>${esc(clsLabel(request))} · LRN ${esc(request.lrn)}</span>
+        <span>RFID ${esc(request.rfid_uid)} · Submitted ${esc(submittedAt)}</span>
+        ${contacts ? `<span>${contacts}</span>` : ''}
+      </div>
+      <div class="enrollment-request-actions">
+        <button type="button" class="small" data-enrollment-approve="${request.id}">Approve</button>
+        <button type="button" class="small danger" data-enrollment-reject="${request.id}">Reject</button>
+      </div>
+    </article>`;
+  }).join('');
+
+  list.querySelectorAll('[data-enrollment-approve]').forEach((button) => {
+    button.onclick = () => reviewEnrollmentRequest(button.dataset.enrollmentApprove, 'approve')
+      .catch((error) => showOperationNotice(error, 'approve this enrollment request', 'review the request and retry.'));
+  });
+  list.querySelectorAll('[data-enrollment-reject]').forEach((button) => {
+    button.onclick = () => reviewEnrollmentRequest(button.dataset.enrollmentReject, 'reject')
+      .catch((error) => showOperationNotice(error, 'reject this enrollment request', 'review the request and retry.'));
+  });
+}
+
+async function reviewEnrollmentRequest(requestId, action) {
+  const request = enrollmentRequests.find((item) => String(item.id) === String(requestId));
+  if (!request) return;
+  const actionLabel = action === 'approve' ? 'approve and enroll' : 'reject';
+  if (!confirm(`Are you sure you want to ${actionLabel} ${request.display_name || request.name}?`)) return;
+  await api(`/enrollment-requests/${requestId}`, { method: 'POST', body: { action } });
+  showUserNotice('success', action === 'approve' ? 'Enrollment approved' : 'Enrollment rejected',
+    action === 'approve' ? 'The student has been added to the roster.' : 'The request was rejected and was not enrolled.');
+  await loadStudents();
 }
 
 function renderStudents() {
@@ -1523,7 +1683,7 @@ function renderStudents() {
     (visibleStudents
       .map(
         (s) =>
-          `<tr>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.student_key}" ${selectedStudentRefs.has(s.student_key) ? 'checked' : ''}></td>` : ''}
+        `<tr${studentMarkMode ? ` data-select-row="${s.student_key}" class="${selectedStudentRefs.has(s.student_key) ? 'student-row-selected' : ''}"` : ''}>${studentMarkMode ? `<td><input type="checkbox" aria-label="Mark ${esc(s.display_name || s.name)} for removal" data-select-student="${s.student_key}" ${selectedStudentRefs.has(s.student_key) ? 'checked' : ''}></td>` : ''}
            <td><a class="student-attendance-link" data-student-detail="${s.student_key}" href="/students/${s.student_key}">${esc(s.display_name || s.name)}</a></td>
            <td>${esc(clsLabel(s))}</td>
            <td>${s.has_rfid_uid ? '<span class="muted">RFID protected</span>' : '<span class="muted">none</span>'}</td>
@@ -1536,6 +1696,7 @@ function renderStudents() {
   $('#stuTable').querySelectorAll('[data-student-detail]').forEach((link) => {
     link.onclick = (event) => {
       event.preventDefault();
+      if (studentMarkMode) return;
       showStudentDetails(link.dataset.studentDetail, true).catch((error) => {
         $('#studentDetailsMsg').textContent = error.message;
         showOperationNotice(error, 'open this student record', 'return to the Students list and open the record again.');
@@ -1547,7 +1708,18 @@ function renderStudents() {
       const studentRef = checkbox.dataset.selectStudent;
       if (checkbox.checked) selectedStudentRefs.add(studentRef);
       else selectedStudentRefs.delete(studentRef);
+      checkbox.closest('tr').classList.toggle('student-row-selected', checkbox.checked);
       updateStudentSelection(visibleStudents);
+    };
+  });
+  $('#stuTable').querySelectorAll('[data-select-row]').forEach((row) => {
+    row.onclick = (event) => {
+      if (event.target.closest('button, input, select, textarea')) return;
+      const checkbox = row.querySelector('[data-select-student]');
+      if (!checkbox) return;
+      if (event.target.closest('a')) event.preventDefault();
+      checkbox.checked = !checkbox.checked;
+      checkbox.dispatchEvent(new Event('change', { bubbles: true }));
     };
   });
   $('#stuTable').querySelectorAll('[data-edit]').forEach((button) => {
@@ -1828,6 +2000,127 @@ $('#sectionForm').onsubmit = async (event) => {
   }
 };
 
+function closeSectionManager() {
+  $('#sectionManagerPanel').classList.add('hidden');
+  $('#sectionManagerMsg').textContent = '';
+  if ($('#stuFormPanel').classList.contains('hidden') &&
+      $('#sectionFormPanel').classList.contains('hidden')) {
+    document.body.classList.remove('modal-open');
+  }
+}
+
+async function loadSectionManager() {
+  const message = $('#sectionManagerMsg');
+  message.className = 'muted';
+  message.textContent = 'Loading sections...';
+  try {
+    const managedSections = await api('/classes');
+    const table = $('#sectionManagerTable');
+    table.innerHTML = `<thead><tr><th>Grade</th><th>Section name</th><th>Active students</th><th>Actions</th></tr></thead><tbody></tbody>`;
+    const body = table.querySelector('tbody');
+    if (!managedSections.length) {
+      body.innerHTML = '<tr><td colspan="4">No sections have been added.</td></tr>';
+    }
+    managedSections.forEach((section) => {
+      const row = document.createElement('tr');
+      const activeStudentCount = Number(section.student_count) || 0;
+      row.innerHTML = `
+        <td>Grade ${esc(section.grade)}</td>
+        <td><input class="section-manager-name" maxlength="100" aria-label="Grade ${esc(section.grade)} section name" value="${esc(section.section)}"></td>
+        <td>${activeStudentCount}</td>
+        <td class="section-manager-actions">
+          <button type="button" class="small" data-section-save>Save</button>
+          <button type="button" class="small danger" data-section-delete ${activeStudentCount ? 'disabled' : ''}>Delete</button>
+          ${activeStudentCount ? '<span class="section-delete-help">Move active students first</span>' : ''}
+        </td>`;
+      const nameInput = row.querySelector('.section-manager-name');
+      row.querySelector('[data-section-save]').onclick = async (event) => {
+        const saveButton = event.currentTarget;
+        const newName = nameInput.value.trim();
+        if (!newName) {
+          nameInput.focus();
+          message.className = 'err';
+          message.textContent = 'Section name cannot be empty.';
+          return;
+        }
+        saveButton.disabled = true;
+        message.className = 'muted';
+        message.textContent = '';
+        try {
+          await api('/classes', {
+            method: 'PUT',
+            body: { grade: section.grade, old_section: section.section, section: newName },
+          });
+          closeSectionManager();
+          await refreshLookups();
+          await loadStudents();
+          showUserNotice('success', 'Section updated', `Grade ${section.grade} students are now in ${newName}.`);
+        } catch (error) {
+          message.className = 'err';
+          message.textContent = operationError(error, 'rename this section', 'check the name and retry.');
+          showOperationNotice(error, 'rename this section', 'check the name and retry.');
+          saveButton.disabled = false;
+        }
+      };
+      row.querySelector('[data-section-delete]').onclick = async (event) => {
+        const deleteButton = event.currentTarget;
+        const confirmed = await confirmDeletion({
+          title: `Delete Grade ${section.grade} - ${section.section}?`,
+          message: Number(section.student_count) > 0
+            ? `${section.student_count} active students are assigned to this section. Move them to another section before deleting it.`
+            : 'This removes the section from enrollment and filters. This action cannot be undone.',
+          confirmText: 'Delete section',
+        });
+        if (!$('#sectionManagerPanel').classList.contains('hidden')) {
+          document.body.classList.add('modal-open');
+        }
+        if (!confirmed) return;
+        deleteButton.disabled = true;
+        message.className = 'muted';
+        message.textContent = '';
+        try {
+          await api('/classes', {
+            method: 'DELETE',
+            body: { grade: section.grade, section: section.section },
+          });
+          closeSectionManager();
+          await refreshLookups();
+          await loadStudents();
+          showUserNotice('success', 'Section deleted', `Grade ${section.grade} - ${section.section} was deleted.`);
+        } catch (error) {
+          if (error.status === 409) {
+            message.className = 'err';
+            message.textContent = error.message;
+            showUserNotice('error', 'Section cannot be deleted', error.message);
+          } else {
+            message.className = 'err';
+            message.textContent = operationError(error, 'delete this section', 'move any assigned students and retry.');
+            showOperationNotice(error, 'delete this section', 'move any assigned students and retry.');
+          }
+          deleteButton.disabled = false;
+        }
+      };
+      body.appendChild(row);
+    });
+    message.textContent = '';
+  } catch (error) {
+    message.className = 'err';
+    message.textContent = operationError(error, 'load sections', 'check your connection and retry.');
+    showOperationNotice(error, 'load sections', 'check your connection and retry.');
+  }
+}
+
+$('#manageSectionsBtn').onclick = async () => {
+  $('#sectionManagerPanel').classList.remove('hidden');
+  document.body.classList.add('modal-open');
+  await loadSectionManager();
+  $('#closeSectionManager').focus();
+};
+$('#closeSectionManager').onclick = closeSectionManager;
+$('#sectionManagerPanel').onclick = (event) => {
+  if (event.target === $('#sectionManagerPanel')) closeSectionManager();
+};
+
 $('#addStudentBtn').onclick = () => {
   clearForm();
   startCardWatch().then(showStudentForm).catch((error) => {
@@ -1882,6 +2175,7 @@ function clearForm() {
   $('#sfMsg').textContent = '';
   $('#stuFormPanel').classList.add('hidden');
   document.body.classList.remove('modal-open');
+  focusUserScanInput();
 }
 $('#sfClear').onclick = clearForm;
 $('#sfClose').onclick = clearForm;
@@ -1939,8 +2233,7 @@ $('#stuForm').onsubmit = async (e) => {
     if (userAddMode) {
       await api('/user/students', { method: 'POST', body });
       clearForm();
-      $('#userStatus').textContent = 'Student saved. The admin can now see the new record.';
-      showUserNotice('success', 'Student enrolled', 'The admin can now see the new record.');
+      showUserNotice('success', 'Enrollment request submitted', 'The student will be enrolled only after an administrator approves the request.');
       return;
     }
     await api(id ? '/students/' + id : '/students', { method: id ? 'PUT' : 'POST', body });
@@ -2060,7 +2353,7 @@ $('#deleteAllSms').onclick = async () => {
 // ---------- settings ----------
 function changeThemeFromControl(event) {
   const darkModeEnabled = event.currentTarget.checked;
-  setTheme(darkModeEnabled ? 'dark' : 'light');
+  setTheme(darkModeEnabled ? 'dark' : 'light', true);
 }
 
 $('#darkModeToggle').onchange = changeThemeFromControl;
@@ -2070,12 +2363,9 @@ function updateThemeControl(darkModeEnabled) {
   for (const prefix of ['', 'user']) {
     const toggle = $(`#${prefix ? 'userDarkModeToggle' : 'darkModeToggle'}`);
     const label = $(`#${prefix ? 'userThemeModeLabel' : 'themeModeLabel'}`);
-    const lightIcon = $(`#${prefix ? 'userLightModeIcon' : 'lightModeIcon'}`);
-    const darkIcon = $(`#${prefix ? 'userDarkModeIcon' : 'darkModeIcon'}`);
     toggle.checked = darkModeEnabled;
+    toggle.setAttribute('aria-label', darkModeEnabled ? 'Switch to light mode' : 'Switch to dark mode');
     label.textContent = darkModeEnabled ? 'Dark mode' : 'Light mode';
-    lightIcon.classList.toggle('active', !darkModeEnabled);
-    darkIcon.classList.toggle('active', darkModeEnabled);
   }
   $('#themeMsg').textContent = `${darkModeEnabled ? 'Dark' : 'Light'} mode is on. Theme choice is saved in this browser.`;
   $('#userThemeMsg').textContent = `${darkModeEnabled ? 'Dark' : 'Light'} mode is on. Theme choice is saved in this browser.`;
@@ -2320,16 +2610,17 @@ async function loadSettings() {
   $('#setEmailNotify').checked = settings.email_notify_enabled === '1';
   updateScheduleOrderValidation();
   const hols = await api('/holidays');
-  $('#holTable').innerHTML =
+  $('#holTable').innerHTML = `<thead><tr><th>Date</th><th>Holiday / suspension</th><th>Reason</th><th></th></tr></thead><tbody>${
     hols
       .map(
         (h) =>
-          `<tr><td>${esc(h.date)}</td><td>${esc(h.name)}</td><td><button class="small ghost" data-hol="${esc(h.date)}">Remove</button></td></tr>`
+          `<tr><td>${esc(h.date === (h.end_date || h.date) ? h.date : `${h.date} – ${h.end_date}`)}</td><td>${esc(h.name)}</td><td class="holiday-reason-cell">${esc(h.reason || 'No reason recorded')}</td><td><button class="small ghost" data-hol="${esc(h.date)}">Remove</button></td></tr>`
       )
-      .join('') || `<tr><td colspan="3">${emptyState(
-      'No holidays or suspensions are listed.',
-      'Weekends are skipped automatically; dates not listed may be treated as school days.'
-    )}</td></tr>`;
+      .join('') || `<tr><td colspan="4">${emptyState(
+        'No holidays or suspensions are listed.',
+        'Weekends are skipped automatically; dates not listed may be treated as school days.'
+      )}</td></tr>`
+  }</tbody>`;
   $('#holTable').querySelectorAll('[data-hol]').forEach((b) => {
     b.onclick = async () => {
       const confirmed = await confirmDeletion({
@@ -2478,10 +2769,15 @@ $('#holForm').onsubmit = async (e) => {
   $('#holMsg').className = 'muted';
   $('#holMsg').textContent = '';
   try {
-    await api('/holidays', { method: 'POST', body: { date: $('#holDate').value, name: $('#holName').value } });
+    const date = $('#holDate').value;
+    const endDate = $('#holUntil').value || date;
+    await api('/holidays', {
+      method: 'POST',
+      body: { date, end_date: endDate, name: $('#holName').value, reason: $('#holReason').value },
+    });
     $('#holForm').reset();
-    $('#holMsg').textContent = 'No-class day saved. It will be excluded from school-day attendance calculations.';
-    showAccountToast('No-class day saved and excluded from attendance calculations.');
+    $('#holMsg').textContent = 'No-class period and suspension reason saved. The notice will appear on the student scan display throughout the date range.';
+    showAccountToast('No-class period and suspension reason saved.');
     loadSettings().catch(showLoadError);
   } catch (err) {
     $('#holMsg').className = 'err';
@@ -2489,5 +2785,11 @@ $('#holForm').onsubmit = async (e) => {
     showOperationNotice(err, 'save this no-class day', 'check the date and retry.');
   }
 };
+
+$('#holDate').addEventListener('change', () => {
+  const until = $('#holUntil');
+  until.min = $('#holDate').value;
+  if (until.value && until.value < until.min) until.value = '';
+});
 
 boot();

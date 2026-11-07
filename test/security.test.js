@@ -103,6 +103,15 @@ test('security headers, role-based access, and login rate limit', async () => {
     assert.ok(Number.isSafeInteger(student.id));
     assert.equal(student.student_ref, null);
     assert.match(student.student_key, /^[A-Za-z0-9_-]+$/);
+    const unconfiguredScheduleTap = await request('/api/user/tap', {
+      method: 'POST',
+      headers: userHeaders,
+      body: JSON.stringify({ uid: '01020304' }),
+    });
+    assert.equal(unconfiguredScheduleTap.status, 503);
+    const unconfiguredScheduleResult = await unconfiguredScheduleTap.json();
+    assert.equal(unconfiguredScheduleResult.code, 'SCHEDULE_NOT_CONFIGURED');
+    assert.equal(unconfiguredScheduleResult.message, 'Attendance schedule is not configured');
     const internalStudent = await db.prepare('SELECT id FROM students WHERE lrn=?').get('123456789012');
     const studentListResponse = await request('/api/students', { headers: adminHeaders });
     const listedStudents = await studentListResponse.json();
@@ -222,10 +231,7 @@ test('security headers, role-based access, and login rate limit', async () => {
       }),
     });
     assert.equal(duplicateStudent.status, 409);
-    assert.equal(
-      (await duplicateStudent.json()).error,
-      "This student is already enrolled. Please contact the admin to update the student's information."
-    );
+    assert.match((await duplicateStudent.json()).error, /already enrolled/i);
     const userMissingCardResponse = await request('/api/user/students', {
       method: 'POST',
       headers: userHeaders,
@@ -240,6 +246,76 @@ test('security headers, role-based access, and login rate limit', async () => {
     });
     assert.equal(userMissingCardResponse.status, 400);
     assert.match((await userMissingCardResponse.json()).error, /scan a valid rfid card/i);
+
+    const enrollmentSubmission = await request('/api/user/students', {
+      method: 'POST',
+      headers: userHeaders,
+      body: JSON.stringify({
+        lrn: '123456789016',
+        surname: 'Pending',
+        first_name: 'Student',
+        grade: 7,
+        section: 'Email Test',
+        rfid_uid: 'C1D2E3F4',
+        rfid_scanned: true,
+        parent_name: 'Guardian',
+      }),
+    });
+    assert.equal(enrollmentSubmission.status, 202);
+    const submittedRequest = await enrollmentSubmission.json();
+    assert.equal(submittedRequest.status, 'pending');
+    assert.equal(await db.prepare('SELECT id FROM students WHERE lrn=?').get('123456789016'), undefined);
+    assert.equal((await request('/api/enrollment-requests', { headers: userHeaders })).status, 403);
+    assert.equal((await request(`/api/enrollment-requests/${submittedRequest.request_id}`, {
+      method: 'POST',
+      headers: userHeaders,
+      body: JSON.stringify({ action: 'approve' }),
+    })).status, 403);
+    const pendingRequestsResponse = await request('/api/enrollment-requests', { headers: adminHeaders });
+    assert.equal(pendingRequestsResponse.status, 200);
+    assert.ok((await pendingRequestsResponse.json()).some((entry) => entry.id === submittedRequest.request_id));
+
+    const approvalResponse = await request(`/api/enrollment-requests/${submittedRequest.request_id}`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ action: 'approve' }),
+    });
+    assert.equal(approvalResponse.status, 200);
+    assert.equal((await approvalResponse.json()).action, 'approve');
+    const approvedStudent = await db.prepare('SELECT name,rfid_uid,active FROM students WHERE lrn=?')
+      .get('123456789016');
+    assert.equal(approvedStudent.name, 'Pending, Student');
+    assert.equal(approvedStudent.rfid_uid, 'C1D2E3F4');
+    assert.equal(approvedStudent.active, 1);
+    assert.equal((await request(`/api/enrollment-requests/${submittedRequest.request_id}`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ action: 'approve' }),
+    })).status, 404);
+
+    const rejectedSubmission = await request('/api/user/students', {
+      method: 'POST',
+      headers: userHeaders,
+      body: JSON.stringify({
+        lrn: '123456789017',
+        surname: 'Rejected',
+        first_name: 'Student',
+        grade: 7,
+        section: 'Email Test',
+        rfid_uid: 'C1D2E3F5',
+        rfid_scanned: true,
+        parent_name: 'Guardian',
+      }),
+    });
+    const rejectedRequest = await rejectedSubmission.json();
+    assert.equal(rejectedSubmission.status, 202);
+    const rejectionResponse = await request(`/api/enrollment-requests/${rejectedRequest.request_id}`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ action: 'reject' }),
+    });
+    assert.equal(rejectionResponse.status, 200);
+    assert.equal(await db.prepare('SELECT id FROM students WHERE lrn=?').get('123456789017'), undefined);
 
     const invalidEmailResponse = await request('/api/students', {
       method: 'POST',

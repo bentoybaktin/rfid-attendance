@@ -97,7 +97,7 @@
     </button>
     <button id="userNavBackdrop" type="button" aria-label="Dismiss navigation"></button>
     <nav id="userNav">
-      <span id="userAccountName" class="muted"></span>
+      <p id="userSignedInAs" class="user-signed-in hidden">Signed in as: <strong id="userSignedInName"></strong></p>
       <button id="userAddStudentBtn" class="ghost" type="button">+ Add student</button>
       <div id="userAppearance">
         <label class="theme-switch" for="userDarkModeToggle">
@@ -109,7 +109,17 @@
             </svg>
             <span class="theme-switch-control">
               <input id="userDarkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
-              <span class="theme-switch-track" aria-hidden="true"></span>
+              <span class="theme-switch-track" aria-hidden="true">
+                <span class="theme-switch-knob">
+                  <svg class="theme-switch-sun" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l-1.42-1.42m11.3-11.3 1.42-1.42"></path>
+                  </svg>
+                  <svg class="theme-switch-moon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+                  </svg>
+                </span>
+              </span>
             </span>
             <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
@@ -124,27 +134,60 @@
   </header>
   <main>
     <section class="panel user-screen">
-      <h2 id="userScreenTitle">Student scan</h2>
-      <p id="userStatus" class="muted" role="status">Waiting for an NFC card tap...</p>
-      <div id="userLoadingPreview" class="detail-skeleton hidden" aria-hidden="true">
-        <span class="skeleton-block skeleton-heading"></span>
-        <span class="skeleton-block skeleton-row"></span>
-        <span class="skeleton-block skeleton-row"></span>
+      <time id="userClock" class="user-clock" aria-label="Current time"></time>
+      <input id="userScanInput" class="user-scan-input" type="text" autocomplete="off" autocapitalize="off"
+        spellcheck="false" inputmode="none" aria-label="RFID scanner input" tabindex="-1">
+      <div id="userIdleState" class="user-idle-state">
+        <div class="user-id-card" aria-hidden="true">
+          <div class="user-id-photo"></div>
+          <div class="user-id-lines user-id-lines-top">
+            <span></span><span></span>
+          </div>
+          <span class="user-id-line-bottom"></span>
+          <span class="user-id-scan-beam"></span>
+        </div>
+        <h2 id="userScreenTitle">Tap your ID card</h2>
+        <p id="userStatus" class="muted" role="status">Hold your card near the reader</p>
       </div>
-      <button id="retryUserConnection" class="ghost hidden" type="button">Retry connection</button>
-      <div id="userStudentDetails" class="hidden">
-        <div class="user-student-identity">
-          <h3 id="userStudentName"></h3>
-          <p id="userGradeSection"></p>
-          <p id="userStudentLrn"></p>
-        </div>
-        <div id="userTapResultBox" class="user-scan-result" role="status">
-          <svg class="user-scan-result-icon" viewBox="0 0 24 24" aria-hidden="true">
-            <path d="m5 12 4.5 4.5L19 7"></path>
-          </svg>
-          <strong id="userTapResult"></strong>
-          <span id="userTapTime"></span>
-        </div>
+      <div id="userStudentDetails" class="user-result hidden" role="status" aria-live="polite">
+        <article class="user-result-card">
+          <div class="user-result-header">
+            <div class="user-result-avatar" aria-hidden="true">
+              <span id="userStudentInitials"></span>
+              <span class="user-check-badge">✓</span>
+            </div>
+            <div class="user-student-identity">
+              <h2 id="userStudentName"></h2>
+              <p id="userGradeSection"></p>
+              <p id="userStudentLrn"></p>
+            </div>
+            <strong id="userTapResult" class="user-status-badge"></strong>
+          </div>
+          <dl class="user-result-meta">
+            <div><dt>Date</dt><dd id="userTapDate"></dd></div>
+            <div><dt>Time</dt><dd id="userTapTime"></dd></div>
+          </dl>
+        </article>
+      </div>
+      <div id="userUnknownCard" class="user-unknown hidden" role="alert" aria-live="assertive">
+        <div class="user-unknown-icon" aria-hidden="true">!</div>
+        <h2>Card not recognized</h2>
+        <p>Please try again or ask the school administrator for help.</p>
+        <button id="enrollUnknownCard" class="enroll-btn" type="button">Enroll this card</button>
+      </div>
+      <div class="user-demo-controls" aria-label="Scan screen demos">
+        <span>Demo:</span>
+        <button type="button" class="ghost" data-user-demo="time-in">Time in</button>
+        <button type="button" class="ghost" data-user-demo="time-out">Time out</button>
+        <button type="button" class="ghost" data-user-demo="unknown">Unknown card</button>
+      </div>
+    </section>
+    <section id="userHolidayOverlay" class="user-holiday-overlay hidden" role="alert" aria-live="assertive" aria-labelledby="userHolidayTitle">
+      <div class="user-holiday-card">
+        <p class="user-holiday-eyebrow">School notice · No classes today</p>
+        <h2 id="userHolidayTitle"></h2>
+        <p id="userHolidayDate" class="user-holiday-date"></p>
+        <p id="userHolidayReason" class="user-holiday-reason"></p>
       </div>
     </section>
   </main>
@@ -177,7 +220,17 @@
             </svg>
             <span class="theme-switch-control">
               <input id="darkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
-              <span class="theme-switch-track" aria-hidden="true"></span>
+              <span class="theme-switch-track" aria-hidden="true">
+                <span class="theme-switch-knob">
+                  <svg class="theme-switch-sun" viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4"></circle>
+                    <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l-1.42-1.42m11.3-11.3 1.42-1.42"></path>
+                  </svg>
+                  <svg class="theme-switch-moon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+                  </svg>
+                </span>
+              </span>
             </span>
             <svg id="darkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
@@ -297,7 +350,13 @@
             <h2>Students</h2>
             <button id="addStudentBtn" type="button">+ Add student</button>
             <button id="addSectionBtn" type="button" class="ghost">+ Add section</button>
+            <button id="manageSectionsBtn" type="button" class="ghost">Manage sections</button>
           </div>
+          <section id="enrollmentRequestsPanel" class="enrollment-requests hidden" aria-labelledby="enrollmentRequestsTitle">
+            <h3 id="enrollmentRequestsTitle">Pending enrollment requests</h3>
+            <p class="muted">Review each student submission. It will not be added to the roster until you approve it.</p>
+            <div id="enrollmentRequestsList"></div>
+          </section>
           <div class="row">
             <label>Section
               <select id="stuClassFilter">
@@ -337,11 +396,22 @@
             <label>Section name <input id="sectionName" maxlength="100" required></label>
             <p id="sectionMsg" class="err" role="status"></p>
             <div class="row">
-              <button type="submit">Save section</button>
+              <button type="submit">Save</button>
               <button type="button" id="cancelSectionForm" class="ghost">Cancel</button>
             </div>
           </form>
         </div>
+      </div>
+      <div id="sectionManagerPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sectionManagerTitle">
+        <section class="panel student-modal-panel section-manager-panel">
+          <div class="row">
+            <h2 id="sectionManagerTitle">Manage sections</h2>
+            <button type="button" id="closeSectionManager" class="ghost" aria-label="Close section manager">Close</button>
+          </div>
+          <p class="muted">Renaming a section also updates its students. Sections with active students cannot be deleted.</p>
+          <p id="sectionManagerMsg" class="muted" role="status"></p>
+          <table id="sectionManagerTable"></table>
+        </section>
       </div>
     </section>
 
@@ -377,7 +447,7 @@
 
     <!-- Settings -->
     <section id="tab-settings" class="tab hidden">
-      <div class="grid2">
+      <div class="grid2 settings-grid">
         <div class="panel">
           <h2>Subject settings</h2>
           <form id="setForm" class="form">
@@ -396,16 +466,20 @@
             <label class="check"><input id="setNotify" type="checkbox"> Send parent SMS on tap</label>
             <label class="check"><input id="setEmailNotify" type="checkbox"> Send parent email on tap</label>
             <p class="muted">Each channel sends only to parents with a contact address and recorded consent. Email requires Resend configuration on the server.</p>
-            <button type="submit">Save settings</button>
+            <button type="submit">Save</button>
             <p id="setMsg" class="muted" role="status"></p>
           </form>
         </div>
         <div class="panel">
           <h2>Holidays / no-class days</h2>
           <p class="muted">Weekends are skipped automatically. Add holidays and suspensions so they don't count as absences.</p>
-          <form id="holForm" class="row">
-            <input type="date" id="holDate" required>
-            <input id="holName" placeholder="Name (e.g. Class suspension)">
+          <form id="holForm" class="form holiday-form">
+            <label>From <input type="date" id="holDate" required></label>
+            <label>Until (optional; leave blank for one day) <input type="date" id="holUntil"></label>
+            <label>Holiday or suspension name <input id="holName" maxlength="120" placeholder="e.g. Class suspension" required></label>
+            <label>Reason for suspension
+              <textarea id="holReason" maxlength="2000" placeholder="Explain why classes are suspended" required></textarea>
+            </label>
             <button type="submit">Add</button>
           </form>
           <p id="holMsg" class="muted" role="status"></p>
