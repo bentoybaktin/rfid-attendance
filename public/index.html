@@ -1,693 +1,782 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>RFID Attendance</title>
   <link rel="stylesheet" href="/style.css">
 </head>
+
 <body>
 
-<section id="userNotice" class="user-notice hidden" role="status" aria-live="polite">
-  <span id="userNoticeIcon" class="user-notice-icon" aria-hidden="true"></span>
-  <div class="user-notice-copy">
-    <strong id="userNoticeTitle"></strong>
-    <p id="userNoticeMessage"></p>
-  </div>
-  <span id="userNoticeProgress" class="user-notice-progress" aria-hidden="true"></span>
-</section>
-
-<div id="login" class="login hidden">
-  <aside class="login-welcome">
-    <p class="login-welcome-school">Tampilisan National High School</p>
-    <h2>Every school day,<br>all in one place.</h2>
-    <p class="login-welcome-copy">A simple, reliable way to keep your school community connected and attendance up to date.</p>
-    <div class="login-welcome-note"><span aria-hidden="true"></span> RFID attendance portal</div>
-  </aside>
-  <form id="loginForm" class="panel login-box">
-    <div class="login-brand">
-      <img src="/assets/timpilan-national-high-school-seal.png" alt="Tampilisan National High School seal">
-      <div class="login-brand-copy">
-        <p>Tampilisan National High School</p>
-        <h1>RFID Attendance</h1>
-      </div>
+  <section id="userNotice" class="user-notice hidden" role="status" aria-live="polite">
+    <span id="userNoticeIcon" class="user-notice-icon" aria-hidden="true"></span>
+    <div class="user-notice-copy">
+      <strong id="userNoticeTitle"></strong>
+      <p id="userNoticeMessage"></p>
     </div>
-    <p class="muted">Log In</p>
-    <input id="email" type="email" maxlength="254" placeholder="Email address" aria-label="Email address" autocomplete="email" required>
-    <div class="password-field">
-      <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
-      <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <g class="password-eye-open">
-            <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
-            <circle cx="12" cy="12" r="3"></circle>
-          </g>
-          <g class="password-eye-closed">
-            <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
-            <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
-          </g>
-        </svg>
-      </button>
-    </div>
-    <label class="login-remember" for="rememberMe">
-      <input id="rememberMe" type="checkbox">
-      <span>Remember me</span>
-    </label>
-    <button type="submit">Sign in</button>
-    <p id="loginErr" class="err"></p>
-    <button id="openForgotPassword" type="button" class="ghost">Forgot admin password?</button>
-  </form>
-</div>
-
-<div id="adminRecovery" class="login login-recovery hidden">
-  <section class="panel login-box" aria-labelledby="recoveryTitle">
-    <h1 id="recoveryTitle">Reset admin password</h1>
-    <p class="muted">Answer the recovery questions configured by the admin.</p>
-    <form id="recoveryLookupForm" class="form">
-      <label>Admin email address <input id="recoveryEmail" type="email" maxlength="254" autocomplete="email" required></label>
-      <button type="submit">Continue</button>
-    </form>
-    <form id="recoveryResetForm" class="form hidden">
-      <p id="recoveryQuestion1" class="muted"></p>
-      <label>Answer
-        <input id="recoveryAnswer1" autocomplete="off" required minlength="4" maxlength="200">
-      </label>
-      <p id="recoveryQuestion2" class="muted"></p>
-      <label>Answer
-        <input id="recoveryAnswer2" autocomplete="off" required minlength="4" maxlength="200">
-      </label>
-      <label>New password (at least 12 characters)
-        <input id="recoveryNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required>
-      </label>
-      <button type="submit">Reset password</button>
-    </form>
-    <p id="recoveryMsg" class="err" role="status"></p>
-    <button id="backToLogin" type="button" class="ghost">Back to sign in</button>
+    <span id="userNoticeProgress" class="user-notice-progress" aria-hidden="true"></span>
   </section>
-</div>
 
-<div id="userApp" class="user-app hidden">
-  <header>
-    <div class="school-brand">
-      <img src="/assets/timpilan-national-high-school-seal.png" alt="">
-      <h1 id="userSchoolName">School</h1>
-    </div>
-    <button id="userNavToggle" class="ghost" type="button" aria-expanded="false" aria-controls="userNav" aria-label="Open navigation">
-      <span></span><span></span><span></span>
-    </button>
-    <button id="userNavBackdrop" type="button" aria-label="Dismiss navigation"></button>
-    <nav id="userNav">
-      <p id="userSignedInAs" class="user-signed-in hidden">Signed in as: <strong id="userSignedInName"></strong></p>
-      <button id="userAddStudentBtn" class="ghost" type="button">+ Add student</button>
-      <div id="userAppearance">
-        <label class="theme-switch" for="userDarkModeToggle">
-          <span id="userThemeModeLabel">Light mode</span>
-          <span class="theme-switch-options">
-            <svg id="userLightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="4"></circle>
-              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
-            </svg>
-            <span class="theme-switch-control">
-              <input id="userDarkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
-              <span class="theme-switch-track" aria-hidden="true">
-                <span class="theme-switch-knob">
-                  <svg class="theme-switch-sun" viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="4"></circle>
-                    <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l-1.42-1.42m11.3-11.3 1.42-1.42"></path>
-                  </svg>
-                  <svg class="theme-switch-moon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
-                  </svg>
+  <div id="login" class="login hidden">
+    <aside class="login-welcome">
+      <p class="login-welcome-school">Tampilisan National High School</p>
+      <h2>Every school day,<br>all in one place.</h2>
+      <p class="login-welcome-copy">A simple, reliable way to keep your school community connected and attendance up to
+        date.</p>
+      <div class="login-welcome-note"><span aria-hidden="true"></span> RFID attendance portal</div>
+    </aside>
+    <form id="loginForm" class="panel login-box">
+      <div class="login-brand">
+        <img src="/assets/timpilan-national-high-school-seal.png" alt="Tampilisan National High School seal">
+        <div class="login-brand-copy">
+          <p>Tampilisan National High School</p>
+          <h1>RFID Attendance</h1>
+        </div>
+      </div>
+      <p class="muted">Log In</p>
+      <input id="email" type="email" maxlength="254" placeholder="Email address" aria-label="Email address"
+        autocomplete="email" required>
+      <div class="password-field">
+        <input id="pw" type="password" placeholder="Password" autocomplete="current-password" required>
+        <button class="password-toggle" type="button" data-password-toggle aria-label="Show password"
+          aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g class="password-eye-open">
+              <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </g>
+            <g class="password-eye-closed">
+              <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+              <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+            </g>
+          </svg>
+        </button>
+      </div>
+      <label class="login-remember" for="rememberMe">
+        <input id="rememberMe" type="checkbox">
+        <span>Remember me</span>
+      </label>
+      <button type="submit">Sign in</button>
+      <p id="loginErr" class="err"></p>
+      <button id="openForgotPassword" type="button" class="ghost">Forgot admin password?</button>
+    </form>
+  </div>
+
+  <div id="adminRecovery" class="login login-recovery hidden">
+    <section class="panel login-box" aria-labelledby="recoveryTitle">
+      <h1 id="recoveryTitle">Reset admin password</h1>
+      <p class="muted">Answer the recovery questions configured by the admin.</p>
+      <form id="recoveryLookupForm" class="form">
+        <label>Admin email address <input id="recoveryEmail" type="email" maxlength="254" autocomplete="email"
+            required></label>
+        <button type="submit">Continue</button>
+      </form>
+      <form id="recoveryResetForm" class="form hidden">
+        <p id="recoveryQuestion1" class="muted"></p>
+        <label>Answer
+          <input id="recoveryAnswer1" autocomplete="off" required minlength="4" maxlength="200">
+        </label>
+        <p id="recoveryQuestion2" class="muted"></p>
+        <label>Answer
+          <input id="recoveryAnswer2" autocomplete="off" required minlength="4" maxlength="200">
+        </label>
+        <label>New password (at least 12 characters)
+          <input id="recoveryNewPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256"
+            required>
+        </label>
+        <button type="submit">Reset password</button>
+      </form>
+      <p id="recoveryMsg" class="err" role="status"></p>
+      <button id="backToLogin" type="button" class="ghost">Back to sign in</button>
+    </section>
+  </div>
+
+  <div id="userApp" class="user-app hidden">
+    <header>
+      <div class="school-brand">
+        <img src="/assets/timpilan-national-high-school-seal.png" alt="">
+        <h1 id="userSchoolName">School</h1>
+      </div>
+      <button id="userNavToggle" class="ghost" type="button" aria-expanded="false" aria-controls="userNav"
+        aria-label="Open navigation">
+        <span></span><span></span><span></span>
+      </button>
+      <button id="userNavBackdrop" type="button" aria-label="Dismiss navigation"></button>
+      <nav id="userNav">
+        <p id="userSignedInAs" class="user-signed-in hidden">Signed in as: <strong id="userSignedInName"></strong></p>
+        <button id="userAddStudentBtn" class="ghost" type="button">+ Add student</button>
+        <div id="userAppearance">
+          <label class="theme-switch" for="userDarkModeToggle">
+            <span id="userThemeModeLabel">Light mode</span>
+            <span class="theme-switch-options">
+              <svg id="userLightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4"></circle>
+                <path
+                  d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42">
+                </path>
+              </svg>
+              <span class="theme-switch-control">
+                <input id="userDarkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
+                <span class="theme-switch-track" aria-hidden="true">
+                  <span class="theme-switch-knob">
+                    <svg class="theme-switch-sun" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="12" cy="12" r="4"></circle>
+                      <path
+                        d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l-1.42-1.42m11.3-11.3 1.42-1.42">
+                      </path>
+                    </svg>
+                    <svg class="theme-switch-moon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+                    </svg>
+                  </span>
                 </span>
               </span>
+              <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+              </svg>
+
             </span>
-            <svg id="userDarkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
-            </svg>
-
-          </span>
-        </label>
-        <p id="userThemeMsg" class="muted" role="status">Theme choice is saved in this browser.</p>
-      </div>
-      <button id="userLogout" class="ghost" type="button">Log out</button>
-    </nav>
-  </header>
-  <main>
-    <section class="panel user-screen">
-      <time id="userClock" class="user-clock" aria-label="Current time"></time>
-      <input id="userScanInput" class="user-scan-input" type="text" autocomplete="off" autocapitalize="off"
-        spellcheck="false" inputmode="none" aria-label="RFID scanner input" tabindex="-1">
-      <div id="userIdleState" class="user-idle-state">
-        <div class="user-id-card" aria-hidden="true">
-          <div class="user-id-photo"></div>
-          <div class="user-id-lines user-id-lines-top">
-            <span></span><span></span>
-          </div>
-          <span class="user-id-line-bottom"></span>
-          <span class="user-id-scan-beam"></span>
+          </label>
+          <p id="userThemeMsg" class="muted" role="status">Theme choice is saved in this browser.</p>
         </div>
-        <h2 id="userScreenTitle">Tap your ID card</h2>
-        <p id="userStatus" class="muted" role="status">Hold your card near the reader</p>
-      </div>
-      <div id="userStudentDetails" class="user-result hidden" role="status" aria-live="polite">
-        <article class="user-result-card">
-          <div class="user-result-header">
-            <div class="user-result-avatar" aria-hidden="true">
-              <span id="userStudentInitials"></span>
-              <span class="user-check-badge">✓</span>
+        <button id="userLogout" class="ghost logout-button" type="button">Log out</button>
+      </nav>
+    </header>
+    <main>
+      <section class="panel user-screen">
+        <time id="userClock" class="user-clock" aria-label="Current time"></time>
+        <input id="userScanInput" class="user-scan-input" type="text" autocomplete="off" autocapitalize="off"
+          spellcheck="false" inputmode="none" aria-label="RFID scanner input" tabindex="-1">
+        <div id="userIdleState" class="user-idle-state">
+          <div class="user-id-card" aria-hidden="true">
+            <div class="user-id-photo"></div>
+            <div class="user-id-lines user-id-lines-top">
+              <span></span><span></span>
             </div>
-            <div class="user-student-identity">
-              <h2 id="userStudentName"></h2>
-              <p id="userGradeSection"></p>
-              <p id="userStudentLrn"></p>
+            <span class="user-id-line-bottom"></span>
+            <span class="user-id-scan-beam"></span>
+          </div>
+          <h2 id="userScreenTitle">Tap your ID card</h2>
+          <p id="userStatus" class="muted" role="status">Hold your card near the reader</p>
+        </div>
+        <div id="userStudentDetails" class="user-result hidden" role="status" aria-live="polite">
+          <article class="user-result-card">
+            <div class="user-result-header">
+              <div class="user-result-avatar" aria-hidden="true">
+                <span id="userStudentInitials"></span>
+                <span class="user-check-badge">✓</span>
+              </div>
+              <div class="user-student-identity">
+                <h2 id="userStudentName"></h2>
+                <p id="userGradeSection"></p>
+                <p id="userStudentLrn"></p>
+              </div>
+              <strong id="userTapResult" class="user-status-badge"></strong>
             </div>
-            <strong id="userTapResult" class="user-status-badge"></strong>
-          </div>
-          <dl class="user-result-meta">
-            <div><dt>Date</dt><dd id="userTapDate"></dd></div>
-            <div><dt>Time</dt><dd id="userTapTime"></dd></div>
-          </dl>
-        </article>
-      </div>
-      <div id="userUnknownCard" class="user-unknown hidden" role="alert" aria-live="assertive">
-        <div class="user-unknown-icon" aria-hidden="true">!</div>
-        <h2>Card not recognized</h2>
-        <p>Please try again or ask the school administrator for help.</p>
-        <button id="enrollUnknownCard" class="enroll-btn" type="button">Enroll this card</button>
-      </div>
-      <div class="user-demo-controls" aria-label="Scan screen demos">
-        <span>Demo:</span>
-        <button type="button" class="ghost" data-user-demo="time-in">Time in</button>
-        <button type="button" class="ghost" data-user-demo="time-out">Time out</button>
-        <button type="button" class="ghost" data-user-demo="unknown">Unknown card</button>
-      </div>
-    </section>
-    <section id="userHolidayOverlay" class="user-holiday-overlay hidden" role="alert" aria-live="assertive" aria-labelledby="userHolidayTitle">
-      <div class="user-holiday-card">
-        <p class="user-holiday-eyebrow">School notice · No classes today</p>
-        <h2 id="userHolidayTitle"></h2>
-        <p id="userHolidayDate" class="user-holiday-date"></p>
-        <p id="userHolidayReason" class="user-holiday-reason"></p>
-      </div>
-    </section>
-  </main>
-</div>
-
-<div id="app" class="hidden">
-  <header>
-    <div class="school-brand">
-      <img src="/assets/timpilan-national-high-school-seal.png" alt="">
-      <h1 id="schoolName">School</h1>
-    </div>
-    <button id="navToggle" class="ghost" type="button" aria-expanded="false" aria-controls="tabs" aria-label="Open navigation">
-      <span></span><span></span><span></span>
-    </button>
-    <button id="navBackdrop" type="button" aria-label="Dismiss navigation"></button>
-    <nav id="tabs">
-      <button data-tab="overview">Overview</button>
-      <button data-tab="attendance">Attendance</button>
-      <button data-tab="students">Students</button>
-      <button data-tab="risk">Early warning</button>
-      <button data-tab="notifications">Notifications</button>
-      <button data-tab="settings">Settings</button>
-      <div id="navAppearance">
-        <label class="theme-switch" for="darkModeToggle">
-          <span id="themeModeLabel">Light mode</span>
-          <span class="theme-switch-options">
-            <svg id="lightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <circle cx="12" cy="12" r="4"></circle>
-              <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
-            </svg>
-            <span class="theme-switch-control">
-              <input id="darkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
-              <span class="theme-switch-track" aria-hidden="true">
-                <span class="theme-switch-knob">
-                  <svg class="theme-switch-sun" viewBox="0 0 24 24" aria-hidden="true">
-                    <circle cx="12" cy="12" r="4"></circle>
-                    <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l-1.42-1.42m11.3-11.3 1.42-1.42"></path>
-                  </svg>
-                  <svg class="theme-switch-moon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
-                  </svg>
-                </span>
-              </span>
-            </span>
-            <svg id="darkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
-            </svg>
-          </span>
-        </label>
-        <p id="themeMsg" class="muted" role="status">Light mode is on. Theme choice is saved in this browser.</p>
-      </div>
-      <button id="logout" class="ghost" type="button">Log out</button>
-    </nav>
-  </header>
-
-  <main>
-    <section id="loadError" class="load-error hidden" role="alert" aria-live="assertive">
-      <div>
-        <h2 id="loadErrorTitle">We couldn't load this page</h2>
-        <p id="loadErrorMessage"></p>
-        <p id="loadErrorCause" class="muted"></p>
-      </div>
-      <button id="retryTabLoad" type="button">Retry</button>
-    </section>
-    <div id="tabLoading" class="tab-loading hidden" role="status" aria-live="polite">
-      <p id="tabLoadingMessage" class="loading-message"></p>
-      <div id="loadingSkeleton" class="loading-skeleton" aria-hidden="true"></div>
-    </div>
-    <!-- Overview -->
-    <section id="tab-overview" class="tab">
-      <p id="todayLine" class="muted"></p>
-      <div class="cards" id="cards"></div>
-      <div class="grid2">
-        <div class="panel">
-          <div class="row">
-            <h2>Live tap feed</h2>
-            <button id="clearFeed" class="small ghost">Delete all feed</button>
-          </div>
-          <ul id="feed" class="feed"></ul>
-          <p id="feedMsg" class="muted" role="status"></p>
+            <dl class="user-result-meta">
+              <div>
+                <dt>Date</dt>
+                <dd id="userTapDate"></dd>
+              </div>
+              <div>
+                <dt>Time</dt>
+                <dd id="userTapTime"></dd>
+              </div>
+            </dl>
+          </article>
         </div>
-        <div class="panel">
-          <div class="row">
-            <h2>Scans to review</h2>
-            <button id="viewAllScans" type="button" class="small ghost">View All</button>
-          </div>
-          <table id="scanAttemptsTable"></table>
+        <div id="userUnknownCard" class="user-unknown hidden" role="alert" aria-live="assertive">
+          <div class="user-unknown-icon" aria-hidden="true">!</div>
+          <h2>Card not recognized</h2>
+          <p>Please try again or ask the school administrator for help.</p>
+          <button id="enrollUnknownCard" class="enroll-btn" type="button">Enroll this card</button>
         </div>
-        <div>
-          <div class="panel">
-            <h2>By section</h2>
-            <table id="byClass"></table>
-          </div>
-          <div class="panel">
-            <h2>Absence notices</h2>
-            <p class="muted">Notifies opted-in parents of students with no tap today (once per student per day). Press this after the late cutoff.</p>
-            <button id="absentBtn">Notify parents of absentees</button>
-          </div>
+        <div class="user-demo-controls" aria-label="Scan screen demos">
+          <span>Demo:</span>
+          <button type="button" class="ghost" data-user-demo="time-in">Time in</button>
+          <button type="button" class="ghost" data-user-demo="time-out">Time out</button>
+          <button type="button" class="ghost" data-user-demo="unknown">Unknown card</button>
         </div>
-      </div>
-    </section>
-
-    <!-- Scan review overlay -->
-    <div id="scanReviewModal" class="student-modal scan-review-modal hidden" role="dialog" aria-modal="true" aria-labelledby="scanReviewTitle">
-      <section class="panel student-modal-panel scan-review-panel">
-        <div class="row">
-          <h2 id="scanReviewTitle">All scans to review</h2>
-          <button id="closeScanReview" type="button" class="ghost" aria-label="Close scan review">Close</button>
-        </div>
-        <p class="muted">Scans are cleared at midnight.</p>
-        <p id="scanReviewMsg" class="muted" role="status"></p>
-        <table id="scanReviewTable"></table>
-        <button id="loadMoreScanReviews" type="button" class="ghost hidden">Load more</button>
       </section>
-    </div>
+      <section id="userHolidayOverlay" class="user-holiday-overlay hidden" role="alert" aria-live="assertive"
+        aria-labelledby="userHolidayTitle">
+        <div class="user-holiday-card">
+          <p class="user-holiday-eyebrow">School notice · No classes today</p>
+          <h2 id="userHolidayTitle"></h2>
+          <p id="userHolidayDate" class="user-holiday-date"></p>
+          <p id="userHolidayReason" class="user-holiday-reason"></p>
+        </div>
+      </section>
+    </main>
+  </div>
 
-    <!-- Attendance -->
-    <section id="tab-attendance" class="tab hidden">
-      <div class="panel">
-        <div class="row">
-          <label>Date <input type="date" id="attDate"></label>
-          <label>Section <select id="attClass"></select></label>
-          <button id="attExport" class="ghost">Export month as SF2-style CSV</button>
-        </div>
-        <table id="attTable"></table>
+  <div id="app" class="hidden">
+    <header>
+      <div class="school-brand">
+        <img src="/assets/timpilan-national-high-school-seal.png" alt="">
+        <h1 id="schoolName">School</h1>
       </div>
-      <div id="studentAttendanceModal" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="studentAttendanceTitle">
-        <div class="panel student-modal-panel monthly-attendance-panel">
-          <div class="row">
-            <h2 id="studentAttendanceTitle">Student monthly attendance</h2>
-            <button type="button" id="closeStudentAttendance" class="ghost" aria-label="Close monthly attendance">Close</button>
-          </div>
-          <p id="studentAttendanceInfo" class="muted"></p>
-          <p id="studentAttendanceFullName" class="muted"></p>
-          <p id="studentAttendanceError" class="err" role="alert"></p>
-          <button id="retryStudentAttendance" class="ghost hidden" type="button">Retry attendance report</button>
-          <div id="studentAttendanceLoading" class="report-loading hidden" aria-hidden="true">
-            <div class="skeleton-cards">
-              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-              <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span class="skeleton-block skeleton-value"></span></div>
-            </div>
-            <div class="skeleton-panel skeleton-table">
-              <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
-              <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
-            </div>
-          </div>
-          <div id="studentAttendanceSummary" class="cards"></div>
-          <table id="studentAttendanceTable"></table>
+      <button id="navToggle" class="ghost" type="button" aria-expanded="false" aria-controls="tabs"
+        aria-label="Open navigation">
+        <span></span><span></span><span></span>
+      </button>
+      <button id="navBackdrop" type="button" aria-label="Dismiss navigation"></button>
+      <nav id="tabs">
+        <button data-tab="overview">Overview</button>
+        <button data-tab="attendance">Attendance</button>
+        <button data-tab="students">Students</button>
+        <button data-tab="risk">Early warning</button>
+        <button data-tab="notifications">Notifications</button>
+        <button data-tab="settings">Settings</button>
+        <div id="navAppearance">
+          <label class="theme-switch" for="darkModeToggle">
+            <span id="themeModeLabel">Light mode</span>
+            <span class="theme-switch-options">
+              <svg id="lightModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4"></circle>
+                <path
+                  d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42">
+                </path>
+              </svg>
+              <span class="theme-switch-control">
+                <input id="darkModeToggle" type="checkbox" role="switch" aria-label="Toggle dark mode">
+                <span class="theme-switch-track" aria-hidden="true">
+                  <span class="theme-switch-knob">
+                    <svg class="theme-switch-sun" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle cx="12" cy="12" r="4"></circle>
+                      <path
+                        d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l-1.42-1.42m11.3-11.3 1.42-1.42">
+                      </path>
+                    </svg>
+                    <svg class="theme-switch-moon" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+                    </svg>
+                  </span>
+                </span>
+              </span>
+              <svg id="darkModeIcon" class="theme-mode-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13Z"></path>
+              </svg>
+            </span>
+          </label>
+          <p id="themeMsg" class="muted" role="status">Light mode is on. Theme choice is saved in this browser.</p>
         </div>
-      </div>
-    </section>
+        <button id="logout" class="ghost logout-button" type="button">Log out</button>
+      </nav>
+    </header>
 
-    <!-- Students -->
-    <section id="tab-students" class="tab hidden">
-      <div class="student-layout">
-        <div class="panel">
-          <div class="row">
-            <h2>Students</h2>
-            <button id="addStudentBtn" type="button">+ Add student</button>
-            <button id="addSectionBtn" type="button" class="ghost">+ Add section</button>
-            <button id="manageSectionsBtn" type="button" class="ghost">Manage sections</button>
-          </div>
-          <section id="enrollmentRequestsPanel" class="enrollment-requests hidden" aria-labelledby="enrollmentRequestsTitle">
-            <h3 id="enrollmentRequestsTitle">Pending enrollment requests</h3>
-            <p class="muted">Review each student submission. It will not be added to the roster until you approve it.</p>
-            <div id="enrollmentRequestsList"></div>
-          </section>
-          <div class="row">
-            <label>Section
-              <select id="stuClassFilter">
-                <option value="">All sections</option>
-              </select>
-            </label>
-            <button id="toggleStudentMark" type="button" class="ghost">Mark students</button>
-            <div id="studentMarkControls" class="row hidden">
-              <button id="markAllStudents" type="button" class="small ghost">Mark all</button>
-              <button id="unmarkAllStudents" type="button" class="small ghost">Unmark all</button>
-              <span id="stuSelectionCount" class="muted">0 marked</span>
-              <button id="stuRemoveSelected" class="small danger" disabled>Remove marked</button>
-            </div>
-          </div>
-          <p id="stuRemoveMsg" class="muted" role="status"></p>
-          <table id="stuTable"></table>
+    <main>
+      <section id="loadError" class="load-error hidden" role="alert" aria-live="assertive">
+        <div>
+          <h2 id="loadErrorTitle">We couldn't load this page</h2>
+          <p id="loadErrorMessage"></p>
+          <p id="loadErrorCause" class="muted"></p>
         </div>
+        <button id="retryTabLoad" type="button">Retry</button>
+      </section>
+      <div id="tabLoading" class="tab-loading hidden" role="status" aria-live="polite">
+        <p id="tabLoadingMessage" class="loading-message"></p>
+        <div id="loadingSkeleton" class="loading-skeleton" aria-hidden="true"></div>
       </div>
-      <div id="sectionFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sectionFormTitle">
-        <div class="panel student-modal-panel">
-          <div class="row">
-            <h2 id="sectionFormTitle">Add section</h2>
-            <button type="button" id="closeSectionForm" class="ghost" aria-label="Close section form">Close</button>
-          </div>
-          <form id="sectionForm" class="form">
-            <label>Grade
-              <select id="sectionGrade" required>
-                <option value="">Choose grade</option>
-                <option value="7">Grade 7</option>
-                <option value="8">Grade 8</option>
-                <option value="9">Grade 9</option>
-                <option value="10">Grade 10</option>
-                <option value="11">Grade 11</option>
-                <option value="12">Grade 12</option>
-              </select>
-            </label>
-            <label>Section name <input id="sectionName" maxlength="100" required></label>
-            <p id="sectionMsg" class="err" role="status"></p>
+      <!-- Overview -->
+      <section id="tab-overview" class="tab">
+        <p id="todayLine" class="muted"></p>
+        <div class="cards" id="cards"></div>
+        <div class="grid2">
+          <div class="panel">
             <div class="row">
-              <button type="submit">Save</button>
-              <button type="button" id="cancelSectionForm" class="ghost">Cancel</button>
+              <h2>Live tap feed</h2>
+              <button id="clearFeed" class="small ghost">Delete all feed</button>
             </div>
-          </form>
-        </div>
-      </div>
-      <div id="sectionManagerPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="sectionManagerTitle">
-        <section class="panel student-modal-panel section-manager-panel">
-          <div class="row">
-            <h2 id="sectionManagerTitle">Manage sections</h2>
-            <button type="button" id="closeSectionManager" class="ghost" aria-label="Close section manager">Close</button>
+            <ul id="feed" class="feed"></ul>
+            <p id="feedMsg" class="muted" role="status"></p>
           </div>
-          <p class="muted">Renaming a section also updates its students. Sections with active students cannot be deleted.</p>
-          <p id="sectionManagerMsg" class="muted" role="status"></p>
-          <table id="sectionManagerTable"></table>
+          <div class="panel">
+            <div class="row">
+              <h2>Scans to review</h2>
+              <button id="viewAllScans" type="button" class="small ghost">View All</button>
+            </div>
+            <table id="scanAttemptsTable"></table>
+          </div>
+          <div>
+            <div class="panel">
+              <h2>By section</h2>
+              <table id="byClass"></table>
+            </div>
+            <div class="panel">
+              <h2>Absence notices</h2>
+              <p class="muted">Notifies opted-in parents of students with no tap today (once per student per day). Press
+                this after the late cutoff.</p>
+              <button id="absentBtn">Notify parents of absentees</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Scan review overlay -->
+      <div id="scanReviewModal" class="student-modal scan-review-modal hidden" role="dialog" aria-modal="true"
+        aria-labelledby="scanReviewTitle">
+        <section class="panel student-modal-panel scan-review-panel">
+          <div class="row">
+            <h2 id="scanReviewTitle">All scans to review</h2>
+            <button id="closeScanReview" type="button" class="ghost" aria-label="Close scan review">Close</button>
+          </div>
+          <p class="muted">Scans are cleared at midnight.</p>
+          <p id="scanReviewMsg" class="muted" role="status"></p>
+          <table id="scanReviewTable"></table>
+          <button id="loadMoreScanReviews" type="button" class="ghost hidden">Load more</button>
         </section>
       </div>
-    </section>
 
-    <!-- Early warning -->
-    <section id="tab-risk" class="tab hidden">
-      <div class="panel">
-        <div class="row">
-          <h2>Early-warning list</h2>
-          <label>Month <input id="riskMonth" type="month"></label>
-          <select id="riskFilter">
-            <option value="flagged">High + Medium</option>
-            <option value="high">High only</option>
-            <option value="all">Everyone</option>
-          </select>
-          <button id="riskExport" class="ghost">Export for counselor (CSV)</button>
-        </div>
-        <p class="muted" id="riskNote"></p>
-        <table id="riskTable"></table>
-      </div>
-    </section>
-
-    <!-- Notifications -->
-    <section id="tab-notifications" class="tab hidden">
-      <div class="panel">
-        <div class="row">
-          <h2>Parent notification log</h2>
-          <button id="deleteAllSms" class="small ghost">Delete all notifications</button>
-        </div>
-        <p id="smsDeleteMsg" class="muted" role="status"></p>
-        <table id="notifTable"></table>
-      </div>
-    </section>
-
-    <!-- Settings -->
-    <section id="tab-settings" class="tab hidden">
-      <div class="grid2 settings-grid">
+      <!-- Attendance -->
+      <section id="tab-attendance" class="tab hidden">
         <div class="panel">
-          <h2>Subject settings</h2>
-          <form id="setForm" class="form">
-            <label>Class <input id="setName"></label>
-            <fieldset class="schedule-settings">
-              <legend>Morning class</legend>
-              <label>Late after <input id="morningLateTime" type="time" required></label>
-              <label>Class finishes <input id="morningEndTime" type="time" required></label>
-            </fieldset>
-            <fieldset class="schedule-settings">
-              <legend>Afternoon class</legend>
-              <label>Late after <input id="afternoonLateTime" type="time" required></label>
-              <label>Class finishes <input id="afternoonEndTime" type="time" required></label>
-            </fieldset>
-            <label>Ignore repeat taps within (seconds) <input id="setDebounce" type="number" min="0"></label>
-            <label class="check"><input id="setNotify" type="checkbox"> Send parent SMS on tap</label>
-            <label class="check"><input id="setEmailNotify" type="checkbox"> Send parent email on tap</label>
-            <p class="muted">Each channel sends only to parents with a contact address and recorded consent. Email requires Resend configuration on the server.</p>
-            <button type="submit">Save</button>
-            <p id="setMsg" class="muted" role="status"></p>
-          </form>
+          <div class="row">
+            <label>Date <input type="date" id="attDate"></label>
+            <label>Section <select id="attClass"></select></label>
+            <button id="attExport" class="ghost">Export month as SF2-style CSV</button>
+          </div>
+          <table id="attTable"></table>
         </div>
+        <div id="studentAttendanceModal" class="student-modal hidden" role="dialog" aria-modal="true"
+          aria-labelledby="studentAttendanceTitle">
+          <div class="panel student-modal-panel monthly-attendance-panel">
+            <div class="row">
+              <h2 id="studentAttendanceTitle">Student monthly attendance</h2>
+              <button type="button" id="closeStudentAttendance" class="ghost"
+                aria-label="Close monthly attendance">Close</button>
+            </div>
+            <p id="studentAttendanceInfo" class="muted"></p>
+            <p id="studentAttendanceFullName" class="muted"></p>
+            <p id="studentAttendanceError" class="err" role="alert"></p>
+            <button id="retryStudentAttendance" class="ghost hidden" type="button">Retry attendance report</button>
+            <div id="studentAttendanceLoading" class="report-loading hidden" aria-hidden="true">
+              <div class="skeleton-cards">
+                <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span
+                    class="skeleton-block skeleton-value"></span></div>
+                <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span
+                    class="skeleton-block skeleton-value"></span></div>
+                <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span
+                    class="skeleton-block skeleton-value"></span></div>
+                <div class="skeleton-card"><span class="skeleton-block skeleton-label"></span><span
+                    class="skeleton-block skeleton-value"></span></div>
+              </div>
+              <div class="skeleton-panel skeleton-table">
+                <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+                <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+              </div>
+            </div>
+            <div id="studentAttendanceSummary" class="cards"></div>
+            <table id="studentAttendanceTable"></table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Students -->
+      <section id="tab-students" class="tab hidden">
+        <div class="student-layout">
+          <div class="panel">
+            <div class="row">
+              <h2>Students</h2>
+              <button id="addStudentBtn" type="button">+ Add student</button>
+              <button id="addSectionBtn" type="button" class="ghost">+ Add section</button>
+              <button id="manageSectionsBtn" type="button" class="ghost">Manage sections</button>
+            </div>
+            <section id="enrollmentRequestsPanel" class="enrollment-requests hidden"
+              aria-labelledby="enrollmentRequestsTitle">
+              <h3 id="enrollmentRequestsTitle">Pending enrollment requests</h3>
+              <p class="muted">Review each student submission. It will not be added to the roster until you approve it.
+              </p>
+              <div id="enrollmentRequestsList"></div>
+            </section>
+            <div class="row">
+              <label>Section
+                <select id="stuClassFilter">
+                  <option value="">All sections</option>
+                </select>
+              </label>
+              <button id="toggleStudentMark" type="button" class="ghost">Mark students</button>
+              <div id="studentMarkControls" class="row hidden">
+                <button id="markAllStudents" type="button" class="small ghost">Mark all</button>
+                <button id="unmarkAllStudents" type="button" class="small ghost">Unmark all</button>
+                <span id="stuSelectionCount" class="muted">0 marked</span>
+                <button id="stuRemoveSelected" class="small danger" disabled>Remove marked</button>
+              </div>
+            </div>
+            <p id="stuRemoveMsg" class="muted" role="status"></p>
+            <table id="stuTable"></table>
+          </div>
+        </div>
+        <div id="sectionFormPanel" class="student-modal hidden" role="dialog" aria-modal="true"
+          aria-labelledby="sectionFormTitle">
+          <div class="panel student-modal-panel">
+            <div class="row">
+              <h2 id="sectionFormTitle">Add section</h2>
+              <button type="button" id="closeSectionForm" class="ghost" aria-label="Close section form">Close</button>
+            </div>
+            <form id="sectionForm" class="form">
+              <label>Grade
+                <select id="sectionGrade" required>
+                  <option value="">Choose grade</option>
+                  <option value="7">Grade 7</option>
+                  <option value="8">Grade 8</option>
+                  <option value="9">Grade 9</option>
+                  <option value="10">Grade 10</option>
+                  <option value="11">Grade 11</option>
+                  <option value="12">Grade 12</option>
+                </select>
+              </label>
+              <label>Section name <input id="sectionName" maxlength="100" required></label>
+              <p id="sectionMsg" class="err" role="status"></p>
+              <div class="row">
+                <button type="submit">Save</button>
+                <button type="button" id="cancelSectionForm" class="ghost">Cancel</button>
+              </div>
+            </form>
+          </div>
+        </div>
+        <div id="sectionManagerPanel" class="student-modal hidden" role="dialog" aria-modal="true"
+          aria-labelledby="sectionManagerTitle">
+          <section class="panel student-modal-panel section-manager-panel">
+            <div class="row">
+              <h2 id="sectionManagerTitle">Manage sections</h2>
+              <button type="button" id="closeSectionManager" class="ghost"
+                aria-label="Close section manager">Close</button>
+            </div>
+            <p class="muted">Renaming a section also updates its students. Sections with active students cannot be
+              deleted.</p>
+            <p id="sectionManagerMsg" class="muted" role="status"></p>
+            <table id="sectionManagerTable"></table>
+          </section>
+        </div>
+      </section>
+
+      <!-- Early warning -->
+      <section id="tab-risk" class="tab hidden">
         <div class="panel">
-          <h2>Holidays / no-class days</h2>
-          <p class="muted">Weekends are skipped automatically. Add holidays and suspensions so they don't count as absences.</p>
-          <form id="holForm" class="form holiday-form">
-            <label>From <input type="date" id="holDate" required></label>
-            <label>Until (optional; leave blank for one day) <input type="date" id="holUntil"></label>
-            <label>Holiday or suspension name <input id="holName" maxlength="120" placeholder="e.g. Class suspension" required></label>
-            <label>Reason for suspension
-              <textarea id="holReason" maxlength="2000" placeholder="Explain why classes are suspended" required></textarea>
+          <div class="row">
+            <h2>Early-warning list</h2>
+            <label>Month <input id="riskMonth" type="month"></label>
+            <select id="riskFilter">
+              <option value="flagged">High + Medium</option>
+              <option value="high">High only</option>
+              <option value="all">Everyone</option>
+            </select>
+            <button id="riskExport" class="ghost">Export for counselor (CSV)</button>
+          </div>
+          <p class="muted" id="riskNote"></p>
+          <table id="riskTable"></table>
+        </div>
+      </section>
+
+      <!-- Notifications -->
+      <section id="tab-notifications" class="tab hidden">
+        <div class="panel">
+          <div class="row">
+            <h2>Parent notification log</h2>
+            <button id="deleteAllSms" class="small ghost">Delete all notifications</button>
+          </div>
+          <p id="smsDeleteMsg" class="muted" role="status"></p>
+          <table id="notifTable"></table>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section id="tab-settings" class="tab hidden">
+        <div class="grid2 settings-grid">
+          <div class="panel">
+            <h2>Subject settings</h2>
+            <form id="setForm" class="form">
+              <label>Class <input id="setName"></label>
+              <fieldset class="schedule-settings">
+                <legend>Morning class</legend>
+                <label>Late after <input id="morningLateTime" type="time" required></label>
+                <label>Class finishes <input id="morningEndTime" type="time" required></label>
+              </fieldset>
+              <fieldset class="schedule-settings">
+                <legend>Afternoon class</legend>
+                <label>Late after <input id="afternoonLateTime" type="time" required></label>
+                <label>Class finishes <input id="afternoonEndTime" type="time" required></label>
+              </fieldset>
+              <label>Ignore repeat taps within (seconds) <input id="setDebounce" type="number" min="0"></label>
+              <label class="check"><input id="setNotify" type="checkbox"> Send parent SMS on tap</label>
+              <label class="check"><input id="setEmailNotify" type="checkbox"> Send parent email on tap</label>
+              <p class="muted">Each channel sends only to parents with a contact address and recorded consent. Email
+                requires Resend configuration on the server.</p>
+              <button type="submit">Save</button>
+              <p id="setMsg" class="muted" role="status"></p>
+            </form>
+          </div>
+          <div class="panel">
+            <h2>Holidays / no-class days</h2>
+            <p class="muted">Weekends are skipped automatically. Add holidays and suspensions so they don't count as
+              absences.</p>
+            <form id="holForm" class="form holiday-form">
+              <label>From <input type="date" id="holDate" required></label>
+              <label>Until (optional; leave blank for one day) <input type="date" id="holUntil"></label>
+              <label>Holiday or suspension name <input id="holName" maxlength="120" placeholder="e.g. Class suspension"
+                  required></label>
+              <label>Reason for suspension
+                <textarea id="holReason" maxlength="2000" placeholder="Explain why classes are suspended"
+                  required></textarea>
+              </label>
+              <button type="submit">Add</button>
+            </form>
+            <p id="holMsg" class="muted" role="status"></p>
+            <table id="holTable"></table>
+          </div>
+          <div class="panel">
+            <h2>Account</h2>
+            <p class="muted">Manage admin and user sign-in credentials and configure admin password recovery.</p>
+            <button id="openAccountModal" type="button">Manage account</button>
+          </div>
+          <div class="panel danger-panel">
+            <div class="danger-panel-content">
+              <h2>Clear all saved data</h2>
+              <p class="muted">Permanently erases all saved students, attendance, taps, notification logs, unknown
+                cards, holidays, settings, and saved account credentials, including old database pages. The database is
+                compacted and its write-ahead log cleared. Admin/user accounts are recreated from configured environment
+                credentials; settings return to defaults.</p>
+              <p id="clearAllDataMsg" class="muted" role="status"></p>
+            </div>
+            <div class="danger-panel-actions">
+              <button id="clearAllData" class="danger">Delete all saved data</button>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <div id="accountModal" class="student-modal hidden" role="dialog" aria-modal="true"
+      aria-labelledby="accountModalTitle">
+      <section class="panel student-modal-panel account-modal-panel">
+        <div class="row">
+          <h2 id="accountModalTitle">Account settings</h2>
+          <button id="closeAccountModal" type="button" class="ghost" aria-label="Close account settings">Close</button>
+        </div>
+        <p class="muted">Enter a new password only if you want to change it. Existing passwords are never displayed.</p>
+        <form id="accountForm" class="form">
+          <label>Current admin password
+            <span class="password-field">
+              <input id="currentAdminPassword" type="password" autocomplete="current-password" required>
+              <button class="password-toggle" type="button" data-password-toggle aria-label="Show password"
+                aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <g class="password-eye-open">
+                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </g>
+                  <g class="password-eye-closed">
+                    <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+                    <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                  </g>
+                </svg>
+              </button>
+            </span>
+          </label>
+          <fieldset class="account-credentials">
+            <legend>Admin account</legend>
+            <label>Admin email address <input id="adminEmail" type="email" required maxlength="254"
+                autocomplete="email"></label>
+            <label>New admin password
+              <span class="password-field">
+                <input id="adminNewPassword" type="password" autocomplete="new-password" minlength="8"
+                  placeholder="Leave blank to keep current password">
+                <button class="password-toggle" type="button" data-password-toggle aria-label="Show password"
+                  aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <g class="password-eye-open">
+                      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </g>
+                    <g class="password-eye-closed">
+                      <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+                      <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                    </g>
+                  </svg>
+                </button>
+              </span>
             </label>
-            <button type="submit">Add</button>
-          </form>
-          <p id="holMsg" class="muted" role="status"></p>
-          <table id="holTable"></table>
-        </div>
-        <div class="panel">
-          <h2>Account</h2>
-          <p class="muted">Manage admin and user sign-in credentials and configure admin password recovery.</p>
-          <button id="openAccountModal" type="button">Manage account</button>
-        </div>
-        <div class="panel danger-panel">
-          <div class="danger-panel-content">
-            <h2>Clear all saved data</h2>
-            <p class="muted">Permanently erases all saved students, attendance, taps, notification logs, unknown cards, holidays, settings, and saved account credentials, including old database pages. The database is compacted and its write-ahead log cleared. Admin/user accounts are recreated from configured environment credentials; settings return to defaults.</p>
-            <p id="clearAllDataMsg" class="muted" role="status"></p>
-          </div>
-          <div class="danger-panel-actions">
-            <button id="clearAllData" class="danger">Delete all saved data</button>
-          </div>
-        </div>
-      </div>
-    </section>
-  </main>
-  <div id="accountModal" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
-    <section class="panel student-modal-panel account-modal-panel">
+          </fieldset>
+          <fieldset class="account-credentials">
+            <legend>User account</legend>
+            <label>User email address <input id="userEmail" type="email" required maxlength="254"
+                autocomplete="email"></label>
+            <label>New user password
+              <span class="password-field">
+                <input id="userNewPassword" type="password" autocomplete="new-password" minlength="8"
+                  placeholder="Leave blank to keep current password">
+                <button class="password-toggle" type="button" data-password-toggle aria-label="Show password"
+                  aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <g class="password-eye-open">
+                      <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </g>
+                    <g class="password-eye-closed">
+                      <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
+                      <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                    </g>
+                  </svg>
+                </button>
+              </span>
+            </label>
+          </fieldset>
+          <button id="saveAccountCredentials" type="submit">Save account changes</button>
+          <p id="accountMsg" class="muted" role="status"></p>
+        </form>
+        <form id="recoverySettingsForm" class="form">
+          <fieldset class="account-credentials">
+            <legend>Admin password recovery</legend>
+            <p class="muted">Set two different questions and answers. Answers are normalized and stored as salted
+              password hashes. Anyone who knows both answers may reset the admin password, so choose answers that are
+              not easy to guess or find.</p>
+            <label>Recovery question 1
+              <select id="recoveryQuestionSelect1" required>
+                <option value="">Choose a question</option>
+                <option value="first_school">What was the name of your first school?</option>
+                <option value="first_pet">What was the name of your first pet?</option>
+                <option value="birth_city">In what city were you born?</option>
+                <option value="childhood_nickname">What was your childhood nickname?</option>
+                <option value="favorite_teacher">What was the name of a favorite teacher?</option>
+                <option value="memorable_place">What was the name of a place important to your childhood?</option>
+              </select>
+            </label>
+            <label>Answer 1 <input id="recoverySettingsAnswer1" type="password" autocomplete="new-password"
+                minlength="4" maxlength="200" placeholder="Enter a new answer" required></label>
+            <label>Recovery question 2
+              <select id="recoveryQuestionSelect2" required>
+                <option value="">Choose a question</option>
+                <option value="first_school">What was the name of your first school?</option>
+                <option value="first_pet">What was the name of your first pet?</option>
+                <option value="birth_city">In what city were you born?</option>
+                <option value="childhood_nickname">What was your childhood nickname?</option>
+                <option value="favorite_teacher">What was the name of a favorite teacher?</option>
+                <option value="memorable_place">What was the name of a place important to your childhood?</option>
+              </select>
+            </label>
+            <label>Answer 2 <input id="recoverySettingsAnswer2" type="password" autocomplete="new-password"
+                minlength="4" maxlength="200" placeholder="Enter a new answer" required></label>
+            <label>Confirm with current admin password
+              <input id="recoverySettingsCurrentPassword" type="password" autocomplete="current-password" required>
+            </label>
+            <button type="submit">Save recovery questions</button>
+            <button id="clearRecoverySettings" type="button" class="ghost">Remove recovery questions</button>
+            <p id="recoverySettingsMsg" class="muted" role="status"></p>
+          </fieldset>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <div id="studentDetailsPanel" class="student-modal hidden" role="dialog" aria-modal="true"
+    aria-labelledby="studentDetailsTitle">
+    <section class="panel student-modal-panel">
       <div class="row">
-        <h2 id="accountModalTitle">Account settings</h2>
-        <button id="closeAccountModal" type="button" class="ghost" aria-label="Close account settings">Close</button>
+        <h2 id="studentDetailsTitle">Student details</h2>
+        <button id="studentDetailsClose" type="button" class="ghost" aria-label="Close student details">Close</button>
       </div>
-      <p class="muted">Enter a new password only if you want to change it. Existing passwords are never displayed.</p>
-      <form id="accountForm" class="form">
-        <label>Current admin password
-          <span class="password-field">
-            <input id="currentAdminPassword" type="password" autocomplete="current-password" required>
-            <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <g class="password-eye-open">
-                  <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </g>
-                <g class="password-eye-closed">
-                  <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
-                  <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
-                </g>
-              </svg>
-            </button>
-          </span>
-        </label>
-        <fieldset class="account-credentials">
-          <legend>Admin account</legend>
-          <label>Admin email address <input id="adminEmail" type="email" required maxlength="254" autocomplete="email"></label>
-          <label>New admin password
-            <span class="password-field">
-              <input id="adminNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password">
-              <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <g class="password-eye-open">
-                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </g>
-                  <g class="password-eye-closed">
-                    <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
-                    <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
-                  </g>
-                </svg>
-              </button>
-            </span>
-          </label>
-        </fieldset>
-        <fieldset class="account-credentials">
-          <legend>User account</legend>
-          <label>User email address <input id="userEmail" type="email" required maxlength="254" autocomplete="email"></label>
-          <label>New user password
-            <span class="password-field">
-              <input id="userNewPassword" type="password" autocomplete="new-password" minlength="8" placeholder="Leave blank to keep current password">
-              <button class="password-toggle" type="button" data-password-toggle aria-label="Show password" aria-pressed="false">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <g class="password-eye-open">
-                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"></path>
-                    <circle cx="12" cy="12" r="3"></circle>
-                  </g>
-                  <g class="password-eye-closed">
-                    <path d="M3 12s3.6-7 9-7c2.2 0 4.1.8 5.7 1.9M21 12s-3.6 7-9 7c-2.2 0-4.1-.8-5.7-1.9"></path>
-                    <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
-                  </g>
-                </svg>
-              </button>
-            </span>
-          </label>
-        </fieldset>
-        <button id="saveAccountCredentials" type="submit">Save account changes</button>
-        <p id="accountMsg" class="muted" role="status"></p>
-      </form>
-      <form id="recoverySettingsForm" class="form">
-        <fieldset class="account-credentials">
-          <legend>Admin password recovery</legend>
-          <p class="muted">Set two different questions and answers. Answers are normalized and stored as salted password hashes. Anyone who knows both answers may reset the admin password, so choose answers that are not easy to guess or find.</p>
-          <label>Recovery question 1
-            <select id="recoveryQuestionSelect1" required>
-              <option value="">Choose a question</option>
-              <option value="first_school">What was the name of your first school?</option>
-              <option value="first_pet">What was the name of your first pet?</option>
-              <option value="birth_city">In what city were you born?</option>
-              <option value="childhood_nickname">What was your childhood nickname?</option>
-              <option value="favorite_teacher">What was the name of a favorite teacher?</option>
-              <option value="memorable_place">What was the name of a place important to your childhood?</option>
-            </select>
-          </label>
-          <label>Answer 1 <input id="recoverySettingsAnswer1" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer" required></label>
-          <label>Recovery question 2
-            <select id="recoveryQuestionSelect2" required>
-              <option value="">Choose a question</option>
-              <option value="first_school">What was the name of your first school?</option>
-              <option value="first_pet">What was the name of your first pet?</option>
-              <option value="birth_city">In what city were you born?</option>
-              <option value="childhood_nickname">What was your childhood nickname?</option>
-              <option value="favorite_teacher">What was the name of a favorite teacher?</option>
-              <option value="memorable_place">What was the name of a place important to your childhood?</option>
-            </select>
-          </label>
-          <label>Answer 2 <input id="recoverySettingsAnswer2" type="password" autocomplete="new-password" minlength="4" maxlength="200" placeholder="Enter a new answer" required></label>
-          <label>Confirm with current admin password
-            <input id="recoverySettingsCurrentPassword" type="password" autocomplete="current-password" required>
-          </label>
-          <button type="submit">Save recovery questions</button>
-          <button id="clearRecoverySettings" type="button" class="ghost">Remove recovery questions</button>
-          <p id="recoverySettingsMsg" class="muted" role="status"></p>
-        </fieldset>
-      </form>
+      <p id="studentDetailsMsg" class="muted" role="status"></p>
+      <div id="studentDetailsLoading" class="detail-skeleton hidden" aria-hidden="true">
+        <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+        <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
+        <span class="skeleton-block skeleton-row"></span>
+      </div>
+      <div id="studentDetailsBody">
+        <dl class="student-details">
+          <div>
+            <dt>LRN</dt>
+            <dd id="studentDetailsLrn"></dd>
+          </div>
+          <div>
+            <dt>Grade / section</dt>
+            <dd id="studentDetailsSection"></dd>
+          </div>
+          <div>
+            <dt>RFID card</dt>
+            <dd id="studentDetailsCard"></dd>
+          </div>
+          <div>
+            <dt>Parent / guardian</dt>
+            <dd id="studentDetailsParent"></dd>
+          </div>
+          <div>
+            <dt>Parent mobile</dt>
+            <dd id="studentDetailsPhone"></dd>
+          </div>
+          <div>
+            <dt>SMS consent</dt>
+            <dd id="studentDetailsConsent"></dd>
+          </div>
+          <div>
+            <dt>Parent email</dt>
+            <dd id="studentDetailsEmail"></dd>
+          </div>
+          <div>
+            <dt>Email consent</dt>
+            <dd id="studentDetailsEmailConsent"></dd>
+          </div>
+        </dl>
+        <button id="studentDetailsEdit" type="button">Edit student</button>
+      </div>
+      <button id="studentDetailsRetry" class="ghost hidden" type="button">Retry loading details</button>
     </section>
   </div>
-</div>
 
-<div id="studentDetailsPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="studentDetailsTitle">
-  <section class="panel student-modal-panel">
-    <div class="row">
-      <h2 id="studentDetailsTitle">Student details</h2>
-      <button id="studentDetailsClose" type="button" class="ghost" aria-label="Close student details">Close</button>
-    </div>
-    <p id="studentDetailsMsg" class="muted" role="status"></p>
-    <div id="studentDetailsLoading" class="detail-skeleton hidden" aria-hidden="true">
-      <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
-      <span class="skeleton-block skeleton-row"></span><span class="skeleton-block skeleton-row"></span>
-      <span class="skeleton-block skeleton-row"></span>
-    </div>
-    <div id="studentDetailsBody">
-      <dl class="student-details">
-        <div><dt>LRN</dt><dd id="studentDetailsLrn"></dd></div>
-        <div><dt>Grade / section</dt><dd id="studentDetailsSection"></dd></div>
-        <div><dt>RFID card</dt><dd id="studentDetailsCard"></dd></div>
-        <div><dt>Parent / guardian</dt><dd id="studentDetailsParent"></dd></div>
-        <div><dt>Parent mobile</dt><dd id="studentDetailsPhone"></dd></div>
-        <div><dt>SMS consent</dt><dd id="studentDetailsConsent"></dd></div>
-        <div><dt>Parent email</dt><dd id="studentDetailsEmail"></dd></div>
-        <div><dt>Email consent</dt><dd id="studentDetailsEmailConsent"></dd></div>
-      </dl>
-      <button id="studentDetailsEdit" type="button">Edit student</button>
-    </div>
-    <button id="studentDetailsRetry" class="ghost hidden" type="button">Retry loading details</button>
-  </section>
-</div>
-
-<div id="deleteConfirmModal" class="student-modal confirmation-modal hidden" role="alertdialog" aria-modal="true" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage">
-  <section class="panel student-modal-panel confirmation-panel">
-    <h2 id="deleteConfirmTitle">Confirm deletion</h2>
-    <p id="deleteConfirmMessage" class="muted"></p>
-    <label id="deleteConfirmPhraseLabel" class="hidden">Type DELETE ALL to confirm
-      <input id="deleteConfirmPhrase" autocomplete="off" spellcheck="false">
-    </label>
-    <p id="deleteConfirmError" class="err" role="alert"></p>
-    <div class="row confirmation-actions">
-      <button id="confirmDeleteAction" class="danger" type="button">Delete</button>
-      <button id="cancelDeleteAction" class="ghost" type="button">Cancel</button>
-    </div>
-  </section>
-</div>
-
-<div id="stuFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">
-  <div class="panel student-modal-panel">
-    <div class="row">
-      <h2 id="formTitle">Add student</h2>
-      <button type="button" id="sfClose" class="ghost" aria-label="Close student form">Close</button>
-    </div>
-    <p id="sfHelp" class="muted hidden"></p>
-    <form id="stuForm" class="form">
-      <input type="hidden" id="sfId">
-      <label required>LRN <input id="sfLrn" maxlength="12" inputmode="numeric" pattern="[0-9]{12}" data-validation-help="Enter the 12-digit LRN printed on the student's school record." placeholder="12-digit LRN" required></label>
-      <label required>Surname <input id="sfSurname" maxlength="100" required></label>
-      <label required>First name <input id="sfFirstName" maxlength="100" required></label>
-      <label>Middle name <input id="sfMiddleName" maxlength="100"></label>
-      <label>Name extension (e.g. Jr., III) <input id="sfNameExtension" maxlength="30"></label>
-      <label>Grade and section <select id="sfClass" required></select></label>
-      <label>RFID card UID (scan required; readers fill this field) <input id="sfUid" placeholder="Scan the card at the reader" readonly></label>
-      <div id="unknownBox" class="chips"></div>
-      <label required>Parent / guardian <input id="sfParent" required></label>
-      <label>Parent mobile number <input id="sfPhone" placeholder="09XXXXXXXXX"></label>
-      <label class="check"><input id="sfConsent" type="checkbox"> Parent gave written consent to receive SMS (Data Privacy Act)</label>
-      <label>Parent email address <input id="sfEmail" type="email" maxlength="254" autocomplete="email"></label>
-      <label class="check"><input id="sfEmailConsent" type="checkbox"> Parent gave consent to receive attendance emails</label>
-      <div class="row">
-        <button type="submit">Save</button>
-        <button type="button" id="sfClear" class="ghost">Cancel</button>
+  <div id="deleteConfirmModal" class="student-modal confirmation-modal hidden" role="alertdialog" aria-modal="true"
+    aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage">
+    <section class="panel student-modal-panel confirmation-panel">
+      <h2 id="deleteConfirmTitle">Confirm deletion</h2>
+      <p id="deleteConfirmMessage" class="muted"></p>
+      <label id="deleteConfirmPhraseLabel" class="hidden">Type DELETE ALL to confirm
+        <input id="deleteConfirmPhrase" autocomplete="off" spellcheck="false">
+      </label>
+      <p id="deleteConfirmError" class="err" role="alert"></p>
+      <div class="row confirmation-actions">
+        <button id="confirmDeleteAction" class="danger" type="button">Delete</button>
+        <button id="cancelDeleteAction" class="ghost" type="button">Cancel</button>
       </div>
-      <p id="sfMsg" class="err" role="status"></p>
-    </form>
+    </section>
   </div>
-</div>
 
-<script src="/app.js"></script>
+  <div id="stuFormPanel" class="student-modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+    <div class="panel student-modal-panel">
+      <div class="row">
+        <h2 id="formTitle">Add student</h2>
+        <button type="button" id="sfClose" class="ghost" aria-label="Close student form">Close</button>
+      </div>
+      <p id="sfHelp" class="muted hidden"></p>
+      <form id="stuForm" class="form">
+        <input type="hidden" id="sfId">
+        <label required>LRN <input id="sfLrn" maxlength="12" inputmode="numeric" pattern="[0-9]{12}"
+            data-validation-help="Enter the 12-digit LRN printed on the student's school record."
+            placeholder="12-digit LRN" required></label>
+        <label required>Surname <input id="sfSurname" maxlength="100" required></label>
+        <label required>First name <input id="sfFirstName" maxlength="100" required></label>
+        <label>Middle name <input id="sfMiddleName" maxlength="100"></label>
+        <label>Name extension (e.g. Jr., III) <input id="sfNameExtension" maxlength="30"></label>
+        <label>Grade and section <select id="sfClass" required></select></label>
+        <label>RFID card UID (scan required; readers fill this field) <input id="sfUid"
+            placeholder="Scan the card at the reader" readonly></label>
+        <div id="unknownBox" class="chips"></div>
+        <label required>Parent / guardian <input id="sfParent" required></label>
+        <label>Parent mobile number <input id="sfPhone" placeholder="09XXXXXXXXX"></label>
+        <label class="check"><input id="sfConsent" type="checkbox"> Parent gave written consent to receive SMS (Data
+          Privacy Act)</label>
+        <label>Parent email address <input id="sfEmail" type="email" maxlength="254" autocomplete="email"></label>
+        <label class="check"><input id="sfEmailConsent" type="checkbox"> Parent gave consent to receive attendance
+          emails</label>
+        <div class="row">
+          <button type="submit">Save</button>
+          <button type="button" id="sfClear" class="ghost">Cancel</button>
+        </div>
+        <p id="sfMsg" class="err" role="status"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
 </body>
+
 </html>

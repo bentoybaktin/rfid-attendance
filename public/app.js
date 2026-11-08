@@ -8,16 +8,34 @@ const userClockFormatter = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
   second: '2-digit',
   hour12: true,
+  timeZone: 'Asia/Manila',
 });
 const userDateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
   day: 'numeric',
   year: 'numeric',
+  timeZone: 'Asia/Manila',
+});
+const manilaTimestampFormatter = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+  timeZone: 'Asia/Manila',
 });
 const scanDateFormatter = new Intl.DateTimeFormat('en-US', {
   dateStyle: 'long',
   timeZone: 'UTC',
 });
+function formatManilaTimestamp(date) {
+  const parts = Object.fromEntries(
+    manilaTimestampFormatter.formatToParts(date).map(({ type, value }) => [type, value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+}
 function clearLoadError() {
   $('#loadErrorMessage').textContent = '';
   $('#loadErrorCause').textContent = '';
@@ -998,8 +1016,7 @@ async function boot() {
   }
 }
 
-function updateUserClock() {
-  const currentTime = new Date();
+function updateUserClock(currentTime = new Date()) {
   const clock = $('#userClock');
   clock.dateTime = currentTime.toISOString();
   clock.textContent = `${userDateFormatter.format(currentTime)} · ${userClockFormatter.format(currentTime)}`;
@@ -1061,14 +1078,16 @@ function showUserDemoResult(demo) {
     return;
   }
   const now = new Date();
+  updateUserClock(now);
+  const timestamp = formatManilaTimestamp(now);
   showUserScanResult({
     first_name: 'Alex',
     surname: 'Santos',
     grade: '10',
     section: 'A',
     lrn: '123456789012',
-    date: now.toISOString().slice(0, 10),
-    ts: now.toISOString(),
+    date: timestamp.slice(0, 10),
+    ts: timestamp,
     type: demo === 'time-out' ? 'MORNING_OUT' : 'MORNING_IN',
     status: 'present',
   });
